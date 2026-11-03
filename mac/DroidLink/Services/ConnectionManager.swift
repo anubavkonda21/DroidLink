@@ -103,7 +103,6 @@ public final class ConnectionManager: @unchecked Sendable {
     private let networkQueue = DispatchQueue(label: "com.droidlink.connectionmanager.network", qos: .userInteractive)
     private var heartbeatTimer: Timer?
     private var reconnectAttempt = 0
-    private var maxReconnectAttempts = 5
 
     // Stream buffers
     private var incomingControlBuffer = Data()
@@ -197,8 +196,12 @@ public final class ConnectionManager: @unchecked Sendable {
                     )
                 }
             } catch {
-                DispatchQueue.main.async {
-                    self.status = .error(error.localizedDescription)
+                if self.reconnectAttempt > 0 && self.currentDeviceInfo != nil {
+                    self.handleConnectionFailure(error: error) // phone not reachable yet: keep retrying
+                } else {
+                    DispatchQueue.main.async {
+                        self.status = .error(error.localizedDescription)
+                    }
                 }
             }
         }
@@ -262,6 +265,7 @@ public final class ConnectionManager: @unchecked Sendable {
             switch state {
             case .ready:
                 DispatchQueue.main.async {
+                    self.reconnectAttempt = 0
                     self.status = .mirroring(info)
                     self.startHeartbeat()
                     self.audioPlayer.start()
@@ -483,15 +487,9 @@ public final class ConnectionManager: @unchecked Sendable {
 
     private func handleConnectionFailure(error: Error?) {
         stopHeartbeat()
-        guard reconnectAttempt < maxReconnectAttempts else {
-            DispatchQueue.main.async {
-                self.status = .disconnected
-            }
-            return
-        }
-
+        // Never give up while a device is known: back off 2s, 4s, 8s, 16s, then every 30s
         reconnectAttempt += 1
-        let delay = pow(2.0, Double(reconnectAttempt)) // Exponential backoff: 2s, 4s, 8s...
+        let delay = min(30, pow(2.0, Double(reconnectAttempt)))
 
         DispatchQueue.main.async {
             self.status = .reconnecting(attempt: self.reconnectAttempt)
@@ -506,7 +504,9 @@ public final class ConnectionManager: @unchecked Sendable {
                 transport: device.connectionType == .usb ? .usb : .wirelessAdb,
                 adbSerial: device.id
             )
+            let attempt = self.reconnectAttempt
             self.connect(to: discDevice)
+            self.reconnectAttempt = attempt // connect() resets it; keep the backoff going until a connection succeeds
         }
     }
 }
