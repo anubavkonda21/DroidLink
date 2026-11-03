@@ -13,6 +13,7 @@ import AppKit
 public final class DashboardViewController: NSViewController {
     private var connectionManager: ConnectionManager { ConnectionManager.shared }
     private weak var webcamButton: NSButton?
+    private weak var autoRotateButton: NSButton?
     private var ringStopTimer: Timer? // non-nil while the phone is ringing
 
     private var deviceNameLabel: NSTextField!
@@ -254,7 +255,7 @@ public final class DashboardViewController: NSViewController {
 
         // (title, SF symbol, tooltip, action): equal-width tiles, icon above text
         let actions: [(String, String, String, Selector)] = [
-            ("Mirror", "iphone.gen3", "Show and control the phone screen", #selector(mirrorClicked(_:))),
+            ("Auto-rotate", "rotate.right", "Turn the phone's auto-rotate on or off", #selector(autoRotateClicked(_:))),
             ("Find My Phone", "speaker.wave.3.fill", "Ring the phone loudly for 15 seconds", #selector(findPhoneClicked(_:))),
             ("Do Not Disturb", "moon.fill", "Choose the phone's Do Not Disturb mode", #selector(dndClicked(_:))),
             ("Send File", "square.and.arrow.up", "Send files from this Mac to the phone", #selector(sendFileClicked(_:))),
@@ -271,6 +272,7 @@ public final class DashboardViewController: NSViewController {
             button.toolTip = tip
             btnRow.addArrangedSubview(button)
             if action == #selector(webcamClicked(_:)) { webcamButton = button }
+            if action == #selector(autoRotateClicked(_:)) { autoRotateButton = button; refreshAutoRotateTile() }
             if let first = btnRow.arrangedSubviews.first, first !== button {
                 button.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
             }
@@ -517,8 +519,32 @@ public final class DashboardViewController: NSViewController {
         }
     }
 
-    @objc private func mirrorClicked(_ sender: NSButton) {
-        (parent as? MainSplitViewController)?.launchScrcpyMirror()
+    /// Flips the phone's auto-rotate (Settings.System.accelerometer_rotation) and shows the new state on the tile.
+    @objc private func autoRotateClicked(_ sender: NSButton) {
+        let adb = connectionManager.adbService
+        Task {
+            let on = (try? await adb.executeADB(["shell", "settings", "get", "system", "accelerometer_rotation"]))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+            _ = try? await adb.executeADB(["shell", "settings", "put", "system", "accelerometer_rotation", on ? "0" : "1"])
+            refreshAutoRotateTile()
+        }
+    }
+
+    /// Reads the phone's current auto-rotate setting: blue "Auto-rotate On" or grey "Auto-rotate Off".
+    private func refreshAutoRotateTile() {
+        let adb = connectionManager.adbService
+        Task {
+            let value = (try? await adb.executeADB(["shell", "settings", "get", "system", "accelerometer_rotation"]))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            await MainActor.run {
+                guard let button = self.autoRotateButton else { return }
+                let on = value == "1"
+                button.title = value == nil ? "Auto-rotate" : on ? "Auto-rotate On" : "Auto-rotate Off"
+                button.image = NSImage(systemSymbolName: on ? "rotate.right" : "lock.rotation", accessibilityDescription: button.title)
+                button.contentTintColor = on || value == nil ? .droidAccent : .secondaryLabelColor
+                button.needsDisplay = true
+            }
+        }
     }
 
     @objc private func sendFileClicked(_ sender: NSButton) {
