@@ -257,7 +257,7 @@ private final class DropZoneView: NSView {
         ])
 
         let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.up.circle.fill", accessibilityDescription: nil) ?? NSImage())
-        icon.contentTintColor = .systemBlue
+        icon.contentTintColor = .droidAccent
         icon.widthAnchor.constraint(equalToConstant: 32).isActive = true
         icon.heightAnchor.constraint(equalToConstant: 32).isActive = true
         stack.addArrangedSubview(icon)
@@ -276,8 +276,8 @@ private final class DropZoneView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        layer?.borderColor = NSColor.systemBlue.cgColor
-        layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.1).cgColor
+        layer?.borderColor = NSColor.droidAccent.cgColor
+        layer?.backgroundColor = NSColor.droidAccent.withAlphaComponent(0.1).cgColor
         return .copy
     }
 
@@ -327,7 +327,7 @@ private final class FileTransferRowCell: NSTableCellView {
 
     private func setupViews() {
         iconView.image = NSImage(systemSymbolName: "doc.fill", accessibilityDescription: nil)
-        iconView.contentTintColor = .systemBlue
+        iconView.contentTintColor = .droidAccent
         iconView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
 

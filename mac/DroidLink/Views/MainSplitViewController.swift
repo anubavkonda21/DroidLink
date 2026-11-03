@@ -493,7 +493,7 @@ private final class SidebarItemCell: NSTableCellView {
         badgeLabel.font = .systemFont(ofSize: 10, weight: .bold)
         badgeLabel.textColor = .white
         badgeLabel.wantsLayer = true
-        badgeLabel.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        badgeLabel.layer?.backgroundColor = NSColor.droidAccent.cgColor
         badgeLabel.layer?.cornerRadius = 8
         badgeLabel.alignment = .center
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false

@@ -112,7 +112,7 @@ public final class OnboardingViewController: NSViewController {
         // Icon
         iconView = NSImageView()
         iconView.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Step Icon")
-        iconView.contentTintColor = .systemBlue
+        iconView.contentTintColor = .droidAccent
         iconView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(iconView)
 

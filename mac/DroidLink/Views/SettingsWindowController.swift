@@ -466,7 +466,7 @@ public final class AboutSettingsViewController: NSViewController {
 
         let iconImageView = NSImageView()
         iconImageView.image = NSImage(systemSymbolName: "bolt.horizontal.fill", accessibilityDescription: "DroidLink")
-        iconImageView.contentTintColor = .systemBlue
+        iconImageView.contentTintColor = .droidAccent
         iconImageView.widthAnchor.constraint(equalToConstant: 64).isActive = true
         iconImageView.heightAnchor.constraint(equalToConstant: 64).isActive = true
         stack.addArrangedSubview(iconImageView)

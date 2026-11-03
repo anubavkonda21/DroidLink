@@ -234,7 +234,7 @@ private final class NotificationRowCell: NSTableCellView {
 
     private func setupViews() {
         appNameLabel.font = .systemFont(ofSize: 11, weight: .bold)
-        appNameLabel.textColor = .systemBlue
+        appNameLabel.textColor = .droidAccent
         appNameLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(appNameLabel)
 

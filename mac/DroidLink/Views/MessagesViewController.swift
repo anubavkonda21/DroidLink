@@ -333,7 +333,7 @@ private final class ConversationRowCell: NSTableCellView {
 
     private func setupViews() {
         avatarView.image = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)
-        avatarView.contentTintColor = .systemBlue
+        avatarView.contentTintColor = .droidAccent
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(avatarView)
 
@@ -432,7 +432,7 @@ private final class MessageBubbleCell: NSTableCellView {
         messageLabel.stringValue = msg.body
 
         if !msg.isIncoming {
-            bubbleView.layer?.backgroundColor = NSColor.systemBlue.cgColor
+            bubbleView.layer?.backgroundColor = NSColor.droidAccent.cgColor
             messageLabel.textColor = .white
             leadingConstraint?.isActive = false
             trailingConstraint?.isActive = true

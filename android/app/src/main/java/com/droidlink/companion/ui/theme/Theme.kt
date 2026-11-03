@@ -2,7 +2,7 @@
  * DroidLink Android Companion Application
  * Copyright (c) 2026 DroidLink Project. All rights reserved.
  *
- * Material 3 application theme, dynamic color adaptation, and custom teal/green palette.
+ * Material 3 application theme, dynamic color adaptation, and custom indigo/violet palette.
  */
 
 package com.droidlink.companion.ui.theme
@@ -23,55 +23,49 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// Custom DroidLink Teal/Emerald Palette
-val TealPrimary = Color(0xFF00897B)
-val TealPrimaryDark = Color(0xFF005B4F)
-val TealPrimaryLight = Color(0xFF4EBAAA)
-val TealAccent = Color(0xFF00BFA5)
-val TealSecondary = Color(0xFF26A69A)
-
-val DarkBackground = Color(0xFF101615)
-val DarkSurface = Color(0xFF192321)
-val DarkSurfaceVariant = Color(0xFF253330)
-
-val LightBackground = Color(0xFFF7FAF9)
-val LightSurface = Color(0xFFFFFFFF)
-val LightSurfaceVariant = Color(0xFFE4ECE9)
+// DroidLink palette (AJ's choice: indigo & violet). Keep in sync with mac/DroidLink/Models/Palette.swift.
+val Indigo = Color(0xFF5E5CE6)
+val IndigoLight = Color(0xFF9B99FF)
+val IndigoDark = Color(0xFF3634A3)
+val Violet = Color(0xFFBF5AF2)
+val VioletLight = Color(0xFFDA8FFF)
 
 private val DarkColorScheme = darkColorScheme(
-    primary = TealPrimaryLight,
-    onPrimary = Color.Black,
-    primaryContainer = TealPrimaryDark,
+    primary = IndigoLight,
+    onPrimary = Color(0xFF14123D),
+    primaryContainer = IndigoDark,
     onPrimaryContainer = Color.White,
-    secondary = TealAccent,
-    onSecondary = Color.Black,
-    background = DarkBackground,
-    onBackground = Color(0xFFE2E3E2),
-    surface = DarkSurface,
-    onSurface = Color(0xFFE2E3E2),
-    surfaceVariant = DarkSurfaceVariant,
-    onSurfaceVariant = Color(0xFFCAC5C4)
+    secondary = VioletLight,
+    onSecondary = Color(0xFF2A0D3D),
+    tertiary = Violet,
+    background = Color(0xFF0D0D14),
+    onBackground = Color(0xFFE6E5F0),
+    surface = Color(0xFF15151F),
+    onSurface = Color(0xFFE6E5F0),
+    surfaceVariant = Color(0xFF23232F),
+    onSurfaceVariant = Color(0xFFC6C4D6)
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = TealPrimary,
+    primary = Indigo,
     onPrimary = Color.White,
-    primaryContainer = TealPrimaryLight,
-    onPrimaryContainer = Color.Black,
-    secondary = TealSecondary,
+    primaryContainer = Color(0xFFE2E1FF),
+    onPrimaryContainer = IndigoDark,
+    secondary = Violet,
     onSecondary = Color.White,
-    background = LightBackground,
-    onBackground = Color(0xFF191C1B),
-    surface = LightSurface,
-    onSurface = Color(0xFF191C1B),
-    surfaceVariant = LightSurfaceVariant,
-    onSurfaceVariant = Color(0xFF3F4947)
+    tertiary = Violet,
+    background = Color(0xFFF6F5FB),
+    onBackground = Color(0xFF1A1A24),
+    surface = Color.White,
+    onSurface = Color(0xFF1A1A24),
+    surfaceVariant = Color(0xFFE6E5F1),
+    onSurfaceVariant = Color(0xFF45445A)
 )
 
 @Composable
 fun DroidLinkTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false, // our own palette, not the wallpaper colours
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

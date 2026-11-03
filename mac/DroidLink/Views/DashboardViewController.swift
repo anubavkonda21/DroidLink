@@ -44,6 +44,19 @@ public final class DashboardViewController: NSViewController {
         glass.material = .underWindowBackground
         glass.blendingMode = .behindWindow
         glass.state = .followsWindowActiveState
+        // soft indigo-to-violet glow at the top, fading out (matches the phone app)
+        let glow = CAGradientLayer()
+        glow.colors = [NSColor.droidAccent.withAlphaComponent(0.22).cgColor,
+                       NSColor.droidGlow.withAlphaComponent(0.08).cgColor,
+                       NSColor.clear.cgColor]
+        glow.locations = [0, 0.35, 0.7]
+        glow.startPoint = CGPoint(x: 0.5, y: 1)
+        glow.endPoint = CGPoint(x: 0.5, y: 0)
+        let glowView = NSView(frame: glass.bounds)
+        glowView.layer = glow
+        glowView.wantsLayer = true
+        glowView.autoresizingMask = [.width, .height]
+        glass.addSubview(glowView)
         glass.addSubview(scrollView)
         self.view = glass
 
@@ -177,7 +190,7 @@ public final class DashboardViewController: NSViewController {
 
         let iconView = NSImageView()
         iconView.image = NSImage(systemSymbolName: "smartphone", accessibilityDescription: "Device")
-        iconView.contentTintColor = .systemBlue
+        iconView.contentTintColor = .droidAccent
         iconView.widthAnchor.constraint(equalToConstant: 44).isActive = true
         iconView.heightAnchor.constraint(equalToConstant: 44).isActive = true
         stack.addArrangedSubview(iconView)
@@ -197,7 +210,7 @@ public final class DashboardViewController: NSViewController {
 
         connectionTypeLabel = NSTextField(labelWithString: "—")
         connectionTypeLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        connectionTypeLabel.textColor = .systemBlue
+        connectionTypeLabel.textColor = .droidAccent
         titleRow.addArrangedSubview(connectionTypeLabel)
         labelStack.addArrangedSubview(titleRow)
 
@@ -261,7 +274,7 @@ public final class DashboardViewController: NSViewController {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(symbolConfig)
             button.setContentHuggingPriority(.defaultLow, for: .horizontal)
             button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            button.contentTintColor = .controlAccentColor
+            button.contentTintColor = .droidAccent
             button.toolTip = tip
             btnRow.addArrangedSubview(button)
             if action == #selector(webcamClicked(_:)) { webcamButton = button }
@@ -536,7 +549,7 @@ public final class DashboardViewController: NSViewController {
         button.title = on ? "Stop Webcam" : "Webcam"
         button.image = NSImage(systemSymbolName: on ? "stop.circle.fill" : "video.fill", accessibilityDescription: button.title)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 20, weight: .regular))
-        button.contentTintColor = on ? .systemRed : .controlAccentColor
+        button.contentTintColor = on ? .systemRed : .droidAccent
     }
 
     @objc private func findPhoneClicked(_ sender: NSButton) {
@@ -624,7 +637,7 @@ final class GlassTileButton: NSButton {
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero } // the cell adds per-symbol insets otherwise
 
     override func draw(_ dirtyRect: NSRect) {
-        let tint = contentTintColor ?? .controlAccentColor
+        let tint = contentTintColor ?? .droidAccent
         let icon = image?.withSymbolConfiguration(
             NSImage.SymbolConfiguration(pointSize: 20, weight: .regular).applying(.init(hierarchicalColor: tint)))
         let iconBox = NSSize(width: 30, height: 26) // same box for every symbol
