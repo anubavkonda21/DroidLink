@@ -271,11 +271,6 @@ public final class ADBService: @unchecked Sendable {
         _ = try await executeADB(["forward", "--remove", "tcp:\(local)"], serial: serial)
     }
 
-    /// Switches the device into wireless ADB mode listening on port 5555
-    public func enableWirelessAdb(port: Int = 5555, serial: String? = nil) async throws {
-        _ = try await executeADB(["tcpip", "\(port)"], serial: serial)
-    }
-
     /// Connects to a wireless device via IP address and port
     public func connectWireless(ip: String, port: Int = 5555) async throws -> String {
         let result = try await executeADB(["connect", "\(ip):\(port)"], serial: nil)
