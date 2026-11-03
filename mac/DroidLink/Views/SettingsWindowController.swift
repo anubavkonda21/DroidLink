@@ -328,10 +328,13 @@ public final class NotificationSettingsViewController: NSViewController {
     private var notifCheckBox: NSButton!
     private var soundCheckBox: NSButton!
     private var dndCheckBox: NSButton!
+    private let appListStack = NSStackView()
+    private var bridge: NotificationBridge { .shared }
 
     public override func loadView() {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 470))
         self.view = view
+        preferredContentSize = view.frame.size
 
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -343,7 +346,8 @@ public final class NotificationSettingsViewController: NSViewController {
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 28),
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32)
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -20)
         ])
 
         let savedNotif = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.enableNotifications) != nil ?
@@ -363,7 +367,97 @@ public final class NotificationSettingsViewController: NSViewController {
         dndCheckBox = NSButton(checkboxWithTitle: "Sync Do Not Disturb / Focus mode", target: self, action: #selector(dndToggled(_:)))
         dndCheckBox.state = savedDnd ? .on : .off
         stack.addArrangedSubview(dndCheckBox)
+
+        // Per-app on/off list
+        let headerRow = NSStackView()
+        headerRow.orientation = .horizontal
+        headerRow.spacing = 8
+        let header = NSTextField(labelWithString: "Show notifications from these apps:")
+        header.font = .systemFont(ofSize: 13, weight: .semibold)
+        headerRow.addArrangedSubview(header)
+        headerRow.addArrangedSubview(NSView())
+        let allOn = NSButton(title: "All On", target: self, action: #selector(allOnClicked(_:)))
+        allOn.controlSize = .small
+        let allOff = NSButton(title: "All Off", target: self, action: #selector(allOffClicked(_:)))
+        allOff.controlSize = .small
+        headerRow.addArrangedSubview(allOn)
+        headerRow.addArrangedSubview(allOff)
+        stack.addArrangedSubview(headerRow)
+        headerRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        appListStack.orientation = .vertical
+        appListStack.alignment = .leading
+        appListStack.spacing = 8
+        appListStack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        appListStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let clip = FlippedClipView()
+        clip.drawsBackground = false
+        let scroll = NSScrollView()
+        scroll.contentView = clip
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.drawsBackground = false
+        scroll.documentView = appListStack
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            scroll.heightAnchor.constraint(equalToConstant: 220),
+            appListStack.topAnchor.constraint(equalTo: clip.topAnchor),
+            appListStack.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+            appListStack.widthAnchor.constraint(equalTo: clip.widthAnchor)
+        ])
+
+        let hint = NSTextField(labelWithString: "Apps are added here the first time they send a notification. Turned-off apps stay silent on the Mac but still notify on your phone.")
+        hint.font = .systemFont(ofSize: 11)
+        hint.textColor = .secondaryLabelColor
+        hint.lineBreakMode = .byWordWrapping
+        hint.maximumNumberOfLines = 0
+        hint.preferredMaxLayoutWidth = 436
+        stack.addArrangedSubview(hint)
+
+        rebuildAppList()
+        NotificationCenter.default.addObserver(self, selector: #selector(appFilterChanged(_:)),
+                                               name: NotificationBridge.didUpdateAppFilterNotification, object: nil)
     }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    private func rebuildAppList() {
+        appListStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let apps = bridge.knownApps.sorted { $0.value.localizedCaseInsensitiveCompare($1.value) == .orderedAscending }
+        if apps.isEmpty {
+            let empty = NSTextField(labelWithString: "No apps yet. Connect your phone and they'll show up as notifications arrive.")
+            empty.textColor = .secondaryLabelColor
+            empty.lineBreakMode = .byWordWrapping
+            empty.maximumNumberOfLines = 0
+            empty.preferredMaxLayoutWidth = 400
+            appListStack.addArrangedSubview(empty)
+            return
+        }
+        for (pkg, name) in apps {
+            let box = NSButton(checkboxWithTitle: name, target: self, action: #selector(appToggled(_:)))
+            box.identifier = NSUserInterfaceItemIdentifier(pkg)
+            box.toolTip = pkg
+            box.state = bridge.isAppEnabled(pkg) ? .on : .off
+            appListStack.addArrangedSubview(box)
+        }
+    }
+
+    @objc private func appFilterChanged(_ note: Notification) {
+        DispatchQueue.main.async { [weak self] in self?.rebuildAppList() }
+    }
+
+    @objc private func appToggled(_ sender: NSButton) {
+        guard let pkg = sender.identifier?.rawValue else { return }
+        bridge.setApp(pkg, enabled: sender.state == .on)
+    }
+
+    @objc private func allOnClicked(_ sender: NSButton) { bridge.setAllApps(enabled: true) }
+    @objc private func allOffClicked(_ sender: NSButton) { bridge.setAllApps(enabled: false) }
 
     @objc private func notifToggled(_ sender: NSButton) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.enableNotifications)
@@ -376,6 +470,11 @@ public final class NotificationSettingsViewController: NSViewController {
     @objc private func dndToggled(_ sender: NSButton) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.syncDnd)
     }
+}
+
+/// Keeps the app list pinned to the top of its scroll view.
+private final class FlippedClipView: NSClipView {
+    override var isFlipped: Bool { true }
 }
 
 // MARK: - File Settings Tab

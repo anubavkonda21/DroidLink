@@ -12,6 +12,8 @@ import UserNotifications
 
 extension NotificationBridge {
     public static let didUpdateNotificationsNotification = Notification.Name("NotificationBridgeDidUpdateNotificationsNotification")
+    /// Posted when a new phone app is seen or an app is switched on/off, so the Settings app list can refresh.
+    public static let didUpdateAppFilterNotification = Notification.Name("NotificationBridgeDidUpdateAppFilterNotification")
 }
 
 /// Manages incoming notifications from Android, integrates with macOS Notification Center,
@@ -25,8 +27,16 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
         }
     }
     public var mutedAppPackages: Set<String> = []
-    public var isSoundEnabled: Bool = true
-    public var isSyncEnabled: Bool = true
+    /// Every phone app that has sent a notification so far (package -> display name), for the per-app on/off list in Settings.
+    public private(set) var knownApps: [String: String] = [:]
+
+    // Backed by the switches in Settings > Notifications (on unless switched off)
+    public var isSoundEnabled: Bool {
+        UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.notificationSound) as? Bool ?? true
+    }
+    public var isSyncEnabled: Bool {
+        UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.enableNotifications) as? Bool ?? true
+    }
 
     // MARK: - Outgoing Action Callbacks
 
@@ -50,6 +60,7 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
         setupNotificationCategories()
         requestAuthorization()
         loadMutedPackages()
+        loadKnownApps()
 
     }
 
@@ -117,6 +128,10 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
     public func receiveNotification(_ notification: AndroidNotification) {
         guard isSyncEnabled else { return }
 
+        if let pkg = notification.appPackage {
+            DispatchQueue.main.async { [weak self] in self?.rememberApp(package: pkg, name: notification.appName) }
+        }
+
         if let pkg = notification.appPackage, mutedAppPackages.contains(pkg) {
             return
         }
@@ -151,6 +166,9 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
         guard isSyncEnabled else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            for item in list {
+                if let pkg = item.appPackage { self.rememberApp(package: pkg, name: item.appName) }
+            }
             self.notifications = list.filter { item in
                 guard let pkg = item.appPackage else { return true }
                 return !self.mutedAppPackages.contains(pkg)
@@ -261,12 +279,48 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
     // MARK: - App Filter Management
 
     public func toggleMute(appPackage: String) {
-        if mutedAppPackages.contains(appPackage) {
+        setApp(appPackage, enabled: mutedAppPackages.contains(appPackage))
+    }
+
+    public func isAppEnabled(_ appPackage: String) -> Bool {
+        !mutedAppPackages.contains(appPackage)
+    }
+
+    /// Switches one phone app's notifications on or off on the Mac. Switching off also clears that app's
+    /// notifications already showing in DroidLink and Notification Center.
+    public func setApp(_ appPackage: String, enabled: Bool) {
+        if enabled {
             mutedAppPackages.remove(appPackage)
         } else {
             mutedAppPackages.insert(appPackage)
+            let ids = notifications.filter { $0.appPackage == appPackage }.map(\.id)
+            if !ids.isEmpty {
+                notifications.removeAll { $0.appPackage == appPackage }
+                if isNotificationCenterAvailable {
+                    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
+                }
+            }
         }
         saveMutedPackages()
+        NotificationCenter.default.post(name: NotificationBridge.didUpdateAppFilterNotification, object: self)
+    }
+
+    public func setAllApps(enabled: Bool) {
+        for pkg in knownApps.keys { setApp(pkg, enabled: enabled) }
+    }
+
+    private func rememberApp(package: String, name: String) {
+        let displayName = name.isEmpty ? package : name
+        guard knownApps[package] != displayName else { return }
+        knownApps[package] = displayName
+        UserDefaults.standard.set(knownApps, forKey: "known_notification_apps")
+        NotificationCenter.default.post(name: NotificationBridge.didUpdateAppFilterNotification, object: self)
+    }
+
+    private func loadKnownApps() {
+        if let dict = UserDefaults.standard.dictionary(forKey: "known_notification_apps") as? [String: String] {
+            knownApps = dict
+        }
     }
 
     private func saveMutedPackages() {
