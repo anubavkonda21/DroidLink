@@ -244,7 +244,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func connectionStateChanged(_ notif: Notification) {
         DispatchQueue.main.async { [weak self] in
             self?.updateStatusBarMenu()
+            self?.autoConnectIfIdle()
         }
+    }
+
+    /// Set by the menu's Disconnect so we don't reconnect straight away; picking a phone clears it.
+    private var userDisconnected = false
+    private var lastAutoConnect = Date.distantPast
+
+    /// Link to the chosen phone on launch and whenever adb sees it again while nothing is connected.
+    private func autoConnectIfIdle() {
+        guard !userDisconnected else { return }
+        switch connectionManager.status {
+        case .disconnected, .error: break
+        default: return
+        }
+        guard let serial = connectionManager.adbService.selectedDevice?.serial,
+              connectionManager.adbService.devices.contains(where: { $0.serial == serial && $0.state == .device }),
+              Date().timeIntervalSince(lastAutoConnect) > 10 else { return }  // a failed attempt sets .error; don't loop on it
+        lastAutoConnect = Date()
+        selectDevice(serial: serial)
     }
 
     // MARK: - Menu Actions
@@ -385,6 +404,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Makes `serial` the phone everything talks to (mirror, webcam, files, control link) and connects to it.
     func selectDevice(serial: String) {
+        userDisconnected = false
         let adb = connectionManager.adbService
         DevicePairing.shared.selectedSerial = serial
         adb.selectedDevice = adb.devices.first { $0.serial == serial } ?? ADBDevice(serial: serial)
@@ -397,6 +417,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func disconnectDevice(_ sender: Any?) {
+        userDisconnected = true
         connectionManager.disconnect()
     }
 
