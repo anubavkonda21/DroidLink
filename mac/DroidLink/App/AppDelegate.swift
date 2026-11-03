@@ -14,6 +14,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public var window: NSWindow?
     private var statusItem: NSStatusItem?
     private var webcamProcess: Process?
+    static let webcamStateChanged = Notification.Name("DroidLinkWebcamStateChanged")
+    var isWebcamOn: Bool { webcamProcess?.isRunning == true }
 
     private var connectionManager: ConnectionManager { ConnectionManager.shared }
 
@@ -265,6 +267,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self?.webcamProcess = nil
                 self?.updateStatusBarMenu()
+                NotificationCenter.default.post(name: AppDelegate.webcamStateChanged, object: nil)
                 guard failed else { return }
                 let alert = NSAlert()
                 alert.alertStyle = .warning
@@ -277,6 +280,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             try p.run()
             webcamProcess = p
             updateStatusBarMenu()
+            NotificationCenter.default.post(name: AppDelegate.webcamStateChanged, object: nil)
         } catch {
             NSAlert(error: error).runModal()
         }

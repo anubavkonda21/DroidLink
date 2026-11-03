@@ -12,6 +12,7 @@ import AppKit
 /// including battery telemetry, storage utilization, network status, and quick ecosystem actions.
 public final class DashboardViewController: NSViewController {
     private var connectionManager: ConnectionManager { ConnectionManager.shared }
+    private weak var webcamButton: NSButton?
 
     private var deviceNameLabel: NSTextField!
     private var deviceSubLabel: NSTextField!
@@ -100,6 +101,13 @@ public final class DashboardViewController: NSViewController {
         }
 
         // Notification registration
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(refreshWebcamTile),
+            name: AppDelegate.webcamStateChanged,
+            object: nil
+        )
+        refreshWebcamTile()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(deviceDataChanged(_:)),
@@ -252,6 +260,7 @@ public final class DashboardViewController: NSViewController {
             button.toolTip = tip
             button.heightAnchor.constraint(equalToConstant: 64).isActive = true
             btnRow.addArrangedSubview(button)
+            if action == #selector(webcamClicked(_:)) { webcamButton = button }
             if let first = btnRow.arrangedSubviews.first, first !== button {
                 button.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
             }
@@ -514,6 +523,16 @@ public final class DashboardViewController: NSViewController {
 
     @objc private func webcamClicked(_ sender: NSButton) {
         (NSApp.delegate as? AppDelegate)?.toggleWebcam(sender)
+    }
+
+    /// While the webcam runs the tile turns into a red "Stop Webcam" button.
+    @objc private func refreshWebcamTile() {
+        guard let button = webcamButton else { return }
+        let on = (NSApp.delegate as? AppDelegate)?.isWebcamOn == true
+        button.title = on ? "Stop Webcam" : "Webcam"
+        button.image = NSImage(systemSymbolName: on ? "stop.circle.fill" : "video.fill", accessibilityDescription: button.title)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 20, weight: .regular))
+        button.contentTintColor = on ? .systemRed : .controlAccentColor
     }
 
     @objc private func findPhoneClicked(_ sender: NSButton) {
