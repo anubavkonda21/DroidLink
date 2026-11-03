@@ -78,6 +78,12 @@ public final class ADBService: @unchecked Sendable {
     private var scanTimer: Timer?
     private let processQueue = DispatchQueue(label: "com.droidlink.adb.queue", qos: .userInitiated)
 
+    /// Phone on another network: this script finds it over Tailscale (Wireless debugging only, never port 5555).
+    private static let tailscaleFinder = "/Users/anubavkonda/Downloads/Screen mirror/.find-phone-tailscale.sh"
+    private var nextTailscaleSearch = Date.distantPast
+    private var tailscaleRetryDelay: TimeInterval = 30
+    private var tailscaleSearchRunning = false
+
     // MARK: - Shared Instance
 
     public static let shared = ADBService()
@@ -166,12 +172,35 @@ public final class ADBService: @unchecked Sendable {
                         self.selectedDevice = ready.first { $0.serial == saved } ?? ready.first { savedIP != nil && $0.serial.hasPrefix(savedIP!) }  // same phone, new Wi-Fi port
                             ?? ready.first { $0.isWireless } ?? parsedDevices.first
                     }
+                    if parsedDevices.contains(where: { $0.state == .device }) {
+                        self.tailscaleRetryDelay = 30
+                    } else {
+                        self.searchViaTailscale()
+                    }
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.lastError = error.localizedDescription
                     self.isScanning = false
                 }
+            }
+        }
+    }
+
+    /// No phone reachable: look for it over Tailscale in the background, backing off
+    /// from 30 s up to 10 min so a phone with Wireless debugging off isn't probed constantly.
+    private func searchViaTailscale() {
+        guard !tailscaleSearchRunning, Date() >= nextTailscaleSearch,
+              FileManager.default.isExecutableFile(atPath: Self.tailscaleFinder) else { return }
+        tailscaleSearchRunning = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            let found = (try? self.runProcess(executable: Self.tailscaleFinder, arguments: [])) != nil
+            DispatchQueue.main.async {
+                self.tailscaleSearchRunning = false
+                self.nextTailscaleSearch = Date().addingTimeInterval(found ? 30 : self.tailscaleRetryDelay)
+                self.tailscaleRetryDelay = found ? 30 : min(self.tailscaleRetryDelay * 2, 600)
+                if found { self.refreshDevices() }
             }
         }
     }
