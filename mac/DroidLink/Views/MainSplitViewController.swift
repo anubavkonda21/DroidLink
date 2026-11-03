@@ -109,6 +109,7 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
         sidebarTableView.target = self
         sidebarTableView.action = #selector(sidebarClicked(_:))
         sidebarTableView.rowHeight = 40
+        sidebarTableView.allowsEmptySelection = false // clicking blank space must not clear the highlight
         scroll.documentView = sidebarTableView
 
         // Footer for Wizard
@@ -428,8 +429,14 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
 
     @objc private func stateChanged(_ notif: Notification) {
         DispatchQueue.main.async { [weak self] in
-            self?.updateToolbarState()
-            self?.sidebarTableView.reloadData()
+            guard let self else { return }
+            self.updateToolbarState()
+            // refresh badges in place; a full reloadData rebuilds the rows and can drop the highlight
+            let table = self.sidebarTableView!
+            table.reloadData(forRowIndexes: IndexSet(integersIn: 0..<table.numberOfRows), columnIndexes: IndexSet(integer: 0))
+            if table.selectedRow != self.currentSection.rawValue {
+                table.selectRowIndexes(IndexSet(integer: self.currentSection.rawValue), byExtendingSelection: false)
+            }
         }
     }
 
@@ -471,6 +478,11 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
     public func tableViewSelectionDidChange(_ notification: Notification) {
         let row = sidebarTableView.selectedRow
         guard row >= 0 && row < NavigationSection.allCases.count else { return }
+        // the row view's own isSelected can lag a reload, so re-tint every cell from the real selection
+        for r in 0..<sidebarTableView.numberOfRows {
+            (sidebarTableView.view(atColumn: 0, row: r, makeIfNecessary: false) as? SidebarItemCell)?.setSelected(r == row)
+        }
+        guard NavigationSection.allCases[row] != currentSection || detailItem == nil else { return }
         selectSection(NavigationSection.allCases[row])
     }
 }
