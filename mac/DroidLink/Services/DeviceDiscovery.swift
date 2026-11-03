@@ -221,7 +221,14 @@ public final class DeviceDiscovery: @unchecked Sendable {
 
             // Deduplicate by id
             var seen = Set<String>()
-            self.discoveredDevices = updated.filter { seen.insert($0.id).inserted }
+            let unique = updated.filter { seen.insert($0.id).inserted }
+
+            // Always prioritize USB / ADB devices at the top
+            self.discoveredDevices = unique.sorted { d1, d2 in
+                if d1.transport == .usb && d2.transport != .usb { return true }
+                if d1.transport != .usb && d2.transport == .usb { return false }
+                return d1.name < d2.name
+            }
         }
     }
 

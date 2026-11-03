@@ -181,15 +181,18 @@ public final class ConnectionManager: @unchecked Sendable {
 
         Task {
             do {
-                if let serial = device.adbSerial {
-                    // USB / ADB transport
+                if let serial = device.adbSerial ?? adbService.devices.first(where: { $0.state == .device })?.serial {
+                    // USB / ADB transport (preferred)
                     try await connectViaAdb(serial: serial)
                 } else if let ip = device.ipAddress, let port = device.port {
                     // Wi-Fi transport
                     try await connectViaNetwork(host: ip, port: port)
                 } else {
-                    // Fallback to mock connect for demonstration
-                    simulateMockConnection(device: device)
+                    throw NSError(
+                        domain: "ConnectionManager",
+                        code: 404,
+                        userInfo: [NSLocalizedDescriptionKey: "No active connection endpoint found for \(device.name). Please check USB debugging or Wi-Fi network."]
+                    )
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -211,25 +214,7 @@ public final class ConnectionManager: @unchecked Sendable {
         try await adbService.forwardPort(local: localAudioPort, remote: 8083, serial: serial)
 
         // Query real device telemetry
-        let info: DeviceInfo
-        if let fetched = try? await adbService.fetchDeviceInfo(serial: serial) {
-            info = fetched
-        } else {
-            info = DeviceInfo(
-                id: serial,
-                name: "Android Device",
-                model: "Connected Android Phone",
-                androidVersion: "Android",
-                batteryLevel: 90,
-                storageTotal: 256_000_000_000,
-                storageFree: 54_000_000_000,
-                isCharging: true,
-                screenWidth: 1080,
-                screenHeight: 2400,
-                screenDpi: 420,
-                connectionType: .usb
-            )
-        }
+        let info = try await adbService.fetchDeviceInfo(serial: serial)
 
         DispatchQueue.main.async {
             self.currentDeviceInfo = info
@@ -242,24 +227,28 @@ public final class ConnectionManager: @unchecked Sendable {
 
     /// Connects directly over local Wi-Fi TCP
     private func connectViaNetwork(host: String, port: UInt16) async throws {
-        let info = DeviceInfo.mockGalaxyS24
+        let info = DeviceInfo(
+            id: "\(host):\(port)",
+            name: "Android Device (Wi-Fi)",
+            model: "Wi-Fi Android Device",
+            androidVersion: "Android",
+            batteryLevel: 100,
+            storageTotal: 256_000_000_000,
+            storageFree: 54_000_000_000,
+            isCharging: false,
+            wifiName: "Wi-Fi",
+            ipAddress: host,
+            screenWidth: 1080,
+            screenHeight: 2400,
+            screenDpi: 420,
+            connectionType: .wifi
+        )
         DispatchQueue.main.async {
             self.currentDeviceInfo = info
             self.inputForwarder.updateTargetDimensions(width: info.screenWidth, height: info.screenHeight)
         }
 
         startSockets(host: host, controlPort: port, videoPort: port + 1, audioPort: port + 2, info: info)
-    }
-
-    /// Simulates a connected device for UI preview / testing
-    public func simulateMockConnection(device: DiscoveredDevice? = nil) {
-        let info = DeviceInfo.mockPixel8
-        DispatchQueue.main.async {
-            self.currentDeviceInfo = info
-            self.status = .mirroring(info)
-            self.inputForwarder.updateTargetDimensions(width: info.screenWidth, height: info.screenHeight)
-            self.audioPlayer.start()
-        }
     }
 
     private func startSockets(host: String, controlPort: UInt16, videoPort: UInt16, audioPort: UInt16, info: DeviceInfo) {

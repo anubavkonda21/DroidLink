@@ -170,40 +170,4 @@ public struct DeviceInfo: Identifiable, Codable, Equatable, Hashable, Sendable {
         }
         return x
     }
-
-    // MARK: - Previews & Mocks
-
-    public static let mockPixel8 = DeviceInfo(
-        id: "24081FDF6000AB",
-        name: "Pixel 8 Pro",
-        model: "Google Pixel 8 Pro",
-        androidVersion: "Android 14 (API 34)",
-        batteryLevel: 84,
-        storageTotal: 256_000_000_000,
-        storageFree: 142_500_000_000,
-        isCharging: true,
-        wifiName: "StudioNet_5G",
-        ipAddress: "192.168.1.145",
-        screenWidth: 1344,
-        screenHeight: 2992,
-        screenDpi: 489,
-        connectionType: .usb
-    )
-
-    public static let mockGalaxyS24 = DeviceInfo(
-        id: "R5CW10ABCDE",
-        name: "Galaxy S24 Ultra",
-        model: "Samsung Galaxy S24 Ultra",
-        androidVersion: "Android 14 (OneUI 6.1)",
-        batteryLevel: 62,
-        storageTotal: 512_000_000_000,
-        storageFree: 310_000_000_000,
-        isCharging: false,
-        wifiName: "HomeNetwork_5GHz",
-        ipAddress: "192.168.0.88",
-        screenWidth: 1440,
-        screenHeight: 3120,
-        screenDpi: 505,
-        connectionType: .wifi
-    )
 }
