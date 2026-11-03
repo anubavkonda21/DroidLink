@@ -38,6 +38,7 @@ import com.droidlink.companion.utils.Constants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -69,6 +70,7 @@ class ScreenCaptureService : Service() {
     private var activeConfig: MirrorConfig = MirrorConfig()
 
     private var isCapturing = false
+    private var codecConfig: ByteArray? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -151,19 +153,26 @@ class ScreenCaptureService : Service() {
                 }
             }, null)
 
-            // Setup MediaCodec encoder
-            setupEncoder(config)
-
-            // Create VirtualDisplay bound to encoder Surface
             val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             val metrics = DisplayMetrics()
             @Suppress("DEPRECATION")
             windowManager.defaultDisplay.getRealMetrics(metrics)
 
+            // Keep the phone's own aspect ratio (a portrait phone in a 1920x1080 frame looks squashed),
+            // capped so the longest side fits the requested size.
+            val scale = minOf(1f, maxOf(config.width, config.height).toFloat() / maxOf(metrics.widthPixels, metrics.heightPixels))
+            val sized = config.copy(
+                width = (metrics.widthPixels * scale).toInt() and 1.inv(),
+                height = (metrics.heightPixels * scale).toInt() and 1.inv()
+            )
+            activeConfig = sized
+
+            setupEncoder(sized)
+
             virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "DroidLink-Display",
-                config.width,
-                config.height,
+                sized.width,
+                sized.height,
                 metrics.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 inputSurface,
@@ -198,6 +207,8 @@ class ScreenCaptureService : Service() {
             setInteger(MediaFormat.KEY_BIT_RATE, config.bitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, config.fps)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, Constants.DEFAULT_I_FRAME_INTERVAL)
+            // Without this a still screen produces no frames, so the Mac never gets a picture
+            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000L)
 
             // Low-latency encoder profile configurations
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -229,10 +240,16 @@ class ScreenCaptureService : Service() {
                 videoServerSocket = ServerSocket(Constants.DEFAULT_VIDEO_PORT)
                 Log.i(TAG, "Video streaming socket open on port ${Constants.DEFAULT_VIDEO_PORT}")
 
+                var currentClient: Socket? = null
+                var clientJob: Job? = null
                 while (isActive && isCapturing) {
                     val client = videoServerSocket?.accept() ?: break
                     Log.i(TAG, "Mac connected to video stream: ${client.inetAddress.hostAddress}")
-                    drainEncoderToSocket(client)
+                    // The newest Mac connection wins; a dead old one would otherwise block it forever
+                    runCatching { currentClient?.close() }
+                    clientJob?.cancelAndJoin()
+                    currentClient = client
+                    clientJob = launch { drainEncoderToSocket(client) }
                 }
             } catch (e: Exception) {
                 if (isActive && isCapturing) {
@@ -252,6 +269,14 @@ class ScreenCaptureService : Service() {
             val codec = mediaCodec ?: return@withContext
 
             try {
+                // A Mac that connects late still needs SPS/PPS and a keyframe to start decoding
+                codecConfig?.let { dos.write(it); dos.flush() }
+                requestSyncFrame()
+                // A still screen gives the encoder no new frames; re-attaching the surface forces one
+                withContext(Dispatchers.Main) {
+                    virtualDisplay?.surface = null
+                    virtualDisplay?.surface = inputSurface
+                }
                 while (isActive && isCapturing) {
                     val outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 10_000L) // 10ms timeout
 
@@ -262,13 +287,13 @@ class ScreenCaptureService : Service() {
                             outputBuffer.position(bufferInfo.offset)
                             outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
 
-                            // Frame packet header: [Int: Size] [Long: Presentation Timestamp] [Int: Flags]
+                            // The Mac decoder expects a raw Annex-B stream (start codes, no extra header)
                             val packetBytes = ByteArray(bufferInfo.size)
                             outputBuffer.get(packetBytes)
+                            if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                                codecConfig = packetBytes
+                            }
 
-                            dos.writeInt(bufferInfo.size)
-                            dos.writeLong(bufferInfo.presentationTimeUs)
-                            dos.writeInt(bufferInfo.flags)
                             dos.write(packetBytes)
                             dos.flush()
                         }

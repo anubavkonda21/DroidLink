@@ -90,6 +90,7 @@ class MainActivity : ComponentActivity() {
 
         // Handle initial incoming deep link if present
         handleDeepLink(intent)
+        if (intent?.action == ACTION_START_MIRRORING) requestScreenCapture()
 
         // Request necessary runtime permissions
         requestAppPermissions()
@@ -133,6 +134,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleDeepLink(intent)
+        if (intent.action == ACTION_START_MIRRORING) requestScreenCapture()
     }
 
     /**
@@ -198,5 +200,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        const val ACTION_START_MIRRORING = "com.droidlink.companion.action.START_MIRRORING_PROMPT"
     }
 }

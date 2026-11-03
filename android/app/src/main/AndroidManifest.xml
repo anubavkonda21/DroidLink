@@ -98,6 +98,20 @@
                 android:value="conversations,alerting,silent" />
         </service>
 
+        <!-- Input Service: mouse/keyboard control from the Mac -->
+        <service
+            android:name=".services.InputService"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/input_service_config" />
+        </service>
+
         <!-- Connection Service (Lifecycle & Discovery) -->
         <service
             android:name=".services.ConnectionService"

@@ -224,17 +224,17 @@ public final class DashboardViewController: NSViewController {
         findBtn.image = NSImage(systemSymbolName: "speaker.wave.3.fill", accessibilityDescription: "Find Phone")
         btnRow.addArrangedSubview(findBtn)
 
-        let hotspotBtn = NSButton(title: "Mobile Hotspot", target: self, action: #selector(hotspotClicked(_:)))
-        hotspotBtn.image = NSImage(systemSymbolName: "personalhotspot", accessibilityDescription: "Hotspot")
-        btnRow.addArrangedSubview(hotspotBtn)
+        let dndBtn = NSButton(title: "Do Not Disturb", target: self, action: #selector(dndClicked(_:)))
+        dndBtn.image = NSImage(systemSymbolName: "moon.fill", accessibilityDescription: "Do Not Disturb")
+        btnRow.addArrangedSubview(dndBtn)
 
-        let darkBtn = NSButton(title: "Sync Dark Mode", target: self, action: #selector(darkModeClicked(_:)))
-        darkBtn.image = NSImage(systemSymbolName: "moon.fill", accessibilityDescription: "Dark Mode")
-        btnRow.addArrangedSubview(darkBtn)
-
-        let rebootBtn = NSButton(title: "Reboot Device", target: self, action: #selector(rebootClicked(_:)))
-        rebootBtn.image = NSImage(systemSymbolName: "arrow.clockwise.circle.fill", accessibilityDescription: "Reboot")
-        btnRow.addArrangedSubview(rebootBtn)
+        // Icon + text, with a tooltip, so each action is self-explanatory
+        let tips = ["Ring the phone loudly for 15 seconds", "Turn the phone's Do Not Disturb on or off"]
+        for (button, tip) in zip(btnRow.arrangedSubviews.compactMap { $0 as? NSButton }, tips) {
+            button.imagePosition = .imageLeading
+            button.bezelStyle = .rounded
+            button.toolTip = tip
+        }
 
         stack.addArrangedSubview(btnRow)
         return card
@@ -474,40 +474,21 @@ public final class DashboardViewController: NSViewController {
     }
 
     @objc private func findPhoneClicked(_ sender: NSButton) {
-        let alert = NSAlert()
-        alert.messageText = "Find Phone"
-        alert.informativeText = "Triggered sound alarm on connected phone."
-        alert.alertStyle = .informational
-        alert.runModal()
+        connectionManager.sendControlMessage(type: .findPhone, payload: [String: String]())
     }
 
-    @objc private func hotspotClicked(_ sender: NSButton) {
-        let alert = NSAlert()
-        alert.messageText = "Mobile Hotspot"
-        alert.informativeText = "Hotspot toggled on device."
-        alert.alertStyle = .informational
-        alert.runModal()
-    }
-
-    @objc private func darkModeClicked(_ sender: NSButton) {
-        let alert = NSAlert()
-        alert.messageText = "Dark Mode Synced"
-        alert.informativeText = "System color scheme synchronized with Android."
-        alert.alertStyle = .informational
-        alert.runModal()
-    }
-
-    @objc private func rebootClicked(_ sender: NSButton) {
-        let alert = NSAlert()
-        alert.messageText = "Reboot Connected Device?"
-        alert.informativeText = "Are you sure you want to reboot the phone? The mirror stream will be disconnected."
-        alert.addButton(withTitle: "Reboot")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .critical
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            Task {
-                _ = try? await connectionManager.adbService.executeADB(["reboot"])
+    /// Toggles Do Not Disturb on the phone (zen_mode 0 = off).
+    @objc private func dndClicked(_ sender: NSButton) {
+        let adb = connectionManager.adbService
+        Task {
+            let current = (try? await adb.executeADB(["shell", "settings", "get", "global", "zen_mode"]))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0"
+            let turnOn = current == "0"
+            let ok = (try? await adb.executeADB(["shell", "cmd", "notification", "set_dnd", turnOn ? "on" : "off"])) != nil
+            await MainActor.run {
+                let alert = NSAlert()
+                alert.messageText = ok ? "Do Not Disturb is \(turnOn ? "on" : "off")" : "Couldn't change Do Not Disturb"
+                alert.runModal()
             }
         }
     }

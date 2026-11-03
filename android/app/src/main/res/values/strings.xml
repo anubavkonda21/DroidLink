@@ -91,4 +91,5 @@
     <string name="channel_connection_desc">Notifications showing background connectivity status with Mac</string>
     <string name="channel_file_transfer_name">DroidLink File Transfer</string>
     <string name="channel_file_transfer_desc">Progress notifications for file uploads and downloads</string>
+    <string name="input_service_description">Lets you control this phone with your Mac\'s mouse and keyboard while DroidLink is mirroring.</string>
 </resources>

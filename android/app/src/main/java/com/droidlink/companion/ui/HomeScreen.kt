@@ -8,6 +8,12 @@
 
 package com.droidlink.companion.ui
 
+import com.droidlink.companion.models.ProtocolMessage
+
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+
+import androidx.compose.foundation.layout.FlowRow
+
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -92,6 +98,7 @@ data class ActivityLogItem(
     val time: String = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
     onRequestScreenCapture: () -> Unit,
@@ -320,14 +327,17 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             AssistChip(
                 onClick = {
-                    val clip = ClipboardService.lastClipContent.value
+                    // The app is in the foreground here, so Android lets it read the clipboard
+                    val clip = (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                        .primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
                     if (clip.isNotBlank()) {
+                        ConnectionService.broadcastProtocolMessage(ProtocolMessage.ClipboardSync(text = clip))
                         Toast.makeText(context, "Synced clipboard to Mac", Toast.LENGTH_SHORT).show()
                         activityLogs.add(0, ActivityLogItem(title = "Clipboard Synced", description = clip.take(20)))
                     } else {

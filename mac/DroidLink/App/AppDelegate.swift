@@ -71,7 +71,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupMainWindow() {
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 750),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], // no fullSizeContentView: it hid content under the toolbar
             backing: .buffered,
             defer: false
         )

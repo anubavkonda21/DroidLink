@@ -101,7 +101,8 @@ sealed class ProtocolMessage {
         val timestamp: Long = System.currentTimeMillis(),
         val hasReplyAction: Boolean = false,
         val key: String = "",
-        val iconBase64: String? = null
+        val iconBase64: String? = null,
+        val isCall: Boolean = false
     ) : ProtocolMessage()
 
     /**

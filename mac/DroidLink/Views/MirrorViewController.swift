@@ -87,7 +87,6 @@ public final class MirrorViewController: NSViewController, NSDraggingDestination
         menu.addItem(withTitle: "Take Screenshot", action: #selector(menuActionScreenshot(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Volume Up", action: #selector(menuActionVolumeUp(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Volume Down", action: #selector(menuActionVolumeDown(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Toggle Screen Off", action: #selector(menuActionToggleScreen(_:)), keyEquivalent: "")
         mtkView.menu = menu
     }
 
@@ -348,12 +347,21 @@ public final class MirrorViewController: NSViewController, NSDraggingDestination
         connectionManager.inputForwarder.onSendNavigation?(NavigationPayload(target: .lockScreen))
     }
 
-    @objc private func menuActionToggleScreen(_ sender: Any) {
-        showToast(message: "Device Screen Toggled")
-    }
-
     @objc private func menuActionScreenshot(_ sender: Any) {
-        showToast(message: "Screenshot Saved to Desktop")
+        let adb = connectionManager.adbService
+        let stamp = Int(Date().timeIntervalSince1970)
+        let remote = "/sdcard/droidlink_shot_\(stamp).png"
+        let local = (NSHomeDirectory() as NSString).appendingPathComponent("Desktop/Phone Screenshot \(stamp).png")
+        Task {
+            do {
+                _ = try await adb.executeADB(["shell", "screencap", "-p", remote])
+                try await adb.pullFile(remotePath: remote, localPath: local)
+                _ = try? await adb.executeADB(["shell", "rm", remote])
+                await MainActor.run { self.showToast(message: "Screenshot saved to Desktop") }
+            } catch {
+                await MainActor.run { self.showToast(message: "Screenshot failed: \(error.localizedDescription)") }
+            }
+        }
     }
 
     // MARK: - NSDraggingDestination

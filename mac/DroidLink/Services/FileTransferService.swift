@@ -43,8 +43,6 @@ public final class FileTransferService: @unchecked Sendable {
     // MARK: - Initialization
 
     public init() {
-        self.activeTransfers = FileTransferItem.mockActiveTransfers
-        self.transferHistory = FileTransferItem.mockCompletedTransfers
         loadSettings()
     }
 
@@ -121,62 +119,21 @@ public final class FileTransferService: @unchecked Sendable {
     }
 
     private func executeTransfer(item: FileTransferItem) async {
-        let startTime = Date()
         let adb = ADBService.shared
 
         do {
-            if item.direction == .toAndroid {
-                guard let localPath = item.localPath, let remotePath = item.remotePath else {
-                    throw NSError(domain: "FileTransfer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid paths"])
-                }
-
-                // Simulate/execute chunked progress updates
-                let simulatedSteps = 10
-                for step in 1...simulatedSteps {
-                    try await Task.sleep(nanoseconds: 200_000_000)
-                    let progress = Double(step) / Double(simulatedSteps)
-                    let bytes = Int64(Double(item.fileSize) * progress)
-                    let elapsed = Date().timeIntervalSince(startTime)
-                    let speed = elapsed > 0 ? Double(bytes) / elapsed : 0.0
-
-                    DispatchQueue.main.async {
-                        if let idx = self.activeTransfers.firstIndex(where: { $0.id == item.id }) {
-                            self.activeTransfers[idx].progress = progress
-                            self.activeTransfers[idx].bytesTransferred = bytes
-                            self.activeTransfers[idx].speed = speed
-                        }
-                    }
-                }
-
-                if adb.isAdbAvailable {
-                    _ = try? await adb.pushFile(localPath: localPath, remotePath: remotePath)
-                }
-            } else {
-                guard let remotePath = item.remotePath, let localPath = item.localPath else {
-                    throw NSError(domain: "FileTransfer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid paths"])
-                }
-
-                if adb.isAdbAvailable {
-                    _ = try? await adb.pullFile(remotePath: remotePath, localPath: localPath)
-                }
-
-                for step in 1...10 {
-                    try await Task.sleep(nanoseconds: 150_000_000)
-                    let progress = Double(step) / 10.0
-                    let bytes = Int64(Double(item.fileSize) * progress)
-                    let elapsed = Date().timeIntervalSince(startTime)
-                    let speed = elapsed > 0 ? Double(bytes) / elapsed : 0.0
-
-                    DispatchQueue.main.async {
-                        if let idx = self.activeTransfers.firstIndex(where: { $0.id == item.id }) {
-                            self.activeTransfers[idx].progress = progress
-                            self.activeTransfers[idx].bytesTransferred = bytes
-                            self.activeTransfers[idx].speed = speed
-                        }
-                    }
-                }
+            guard adb.isAdbAvailable else {
+                throw NSError(domain: "FileTransfer", code: -2, userInfo: [NSLocalizedDescriptionKey: "adb not found"])
             }
-
+            guard let localPath = item.localPath, let remotePath = item.remotePath else {
+                throw NSError(domain: "FileTransfer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid paths"])
+            }
+            // Real adb result decides success; errors now surface as a failed transfer
+            if item.direction == .toAndroid {
+                try await adb.pushFile(localPath: localPath, remotePath: remotePath)
+            } else {
+                try await adb.pullFile(remotePath: remotePath, localPath: localPath)
+            }
             // Completed successfully
             DispatchQueue.main.async {
                 self.completeTransfer(id: item.id)

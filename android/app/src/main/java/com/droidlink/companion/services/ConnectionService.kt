@@ -39,9 +39,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.io.PrintWriter
+import com.droidlink.companion.models.MacWire
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
@@ -65,7 +71,7 @@ class ConnectionService : Service() {
 
     // Active client control sockets (Mac desktop connections)
     private val activeClients = CopyOnWriteArrayList<Socket>()
-    private val activeWriters = CopyOnWriteArrayList<PrintWriter>()
+    private val activeWriters = CopyOnWriteArrayList<DataOutputStream>()
 
     inner class LocalBinder : Binder() {
         fun getService(): ConnectionService = this@ConnectionService
@@ -214,34 +220,24 @@ class ConnectionService : Service() {
     }
 
     /**
-     * Handles an active control socket session with reading loop and message routing.
+     * Handles one Mac control connection: length-prefixed JSON envelopes (see MacWire).
      */
     private suspend fun handleClientConnection(socket: Socket) = withContext(Dispatchers.IO) {
         activeClients.add(socket)
-        val writer = PrintWriter(socket.getOutputStream(), true)
+        val writer = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
         activeWriters.add(writer)
-
         val hostAddress = socket.inetAddress.hostAddress ?: "Unknown"
 
-        // Send Initial Handshake to Mac
-        val display = deviceInfo.getDisplayMetrics()
-        val handshake = ProtocolMessage.Handshake(
-            version = Constants.PROTOCOL_VERSION,
-            deviceName = deviceInfo.deviceName,
-            deviceModel = deviceInfo.model,
-            osVersion = deviceInfo.androidVersion,
-            screenWidth = display.width,
-            screenHeight = display.height
-        )
-        sendMessageDirect(writer, handshake)
-
         try {
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+            val input = DataInputStream(BufferedInputStream(socket.getInputStream()))
             while (isActive) {
-                val line = reader.readLine() ?: break
-                if (line.isNotBlank()) {
-                    processIncomingMessage(line, hostAddress)
+                val frame = MacWire.readFrame(input) ?: break
+                val envelope = MacWire.decode(frame)
+                if (envelope == null) {
+                    Log.w(TAG, "Undecodable control frame (${frame.size} bytes)")
+                    continue
                 }
+                processIncomingMessage(envelope, hostAddress)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Client socket disconnected or closed: ${e.message}")
@@ -258,84 +254,94 @@ class ConnectionService : Service() {
     }
 
     /**
-     * Deserializes and routes incoming protocol messages from Mac to respective subsystems.
+     * Routes a message from the Mac to the matching subsystem.
      */
-    private fun processIncomingMessage(json: String, remoteHost: String) {
-        val msg = ProtocolMessage.fromJson(json) ?: run {
-            Log.w(TAG, "Unrecognized message JSON: $json")
-            return
-        }
-
-        when (msg) {
-            is ProtocolMessage.HandshakeAck -> {
-                Log.i(TAG, "Handshake confirmed with Mac: ${msg.macHostname} (Session: ${msg.sessionId})")
-                _connectionState.value = ConnectionState.Connected(
-                    deviceName = msg.macHostname,
-                    hostAddress = remoteHost
-                )
-                updateForegroundNotification("Connected to ${msg.macHostname}")
-                // Start sending device status updates
-                sendDeviceTelemetry()
+    private fun processIncomingMessage(msg: MacWire.Envelope, remoteHost: String) {
+        val p = msg.payload
+        when (msg.type) {
+            "handshake" -> {
+                val macName = p?.str("deviceName") ?: "Mac"
+                Log.i(TAG, "Handshake from Mac: $macName")
+                _connectionState.value = ConnectionState.Connected(deviceName = macName, hostAddress = remoteHost)
+                updateForegroundNotification("Connected to $macName")
+                if (ScreenCaptureService.isRunning) ScreenCaptureService.instance?.requestSyncFrame()
+                else promptToStartMirroring(macName)
             }
-
-            is ProtocolMessage.HeartbeatAck -> {
-                val now = System.currentTimeMillis()
-                val rtt = now - msg.originalTimestamp
+            "heartbeat" -> {
+                // Mac only sends heartbeats once connected; covers a missed handshake.
+                if (!_connectionState.value.isConnected) {
+                    _connectionState.value = ConnectionState.Connected(deviceName = "Mac", hostAddress = remoteHost)
+                }
+                val rtt = System.currentTimeMillis() - (msg.timestamp * 1000).toLong()
                 _latencyMs.value = rtt.coerceAtLeast(0L)
             }
-
-            is ProtocolMessage.Heartbeat -> {
-                // Reply immediately
-                sendProtocolMessage(ProtocolMessage.HeartbeatAck(msg.timestamp))
+            "clipboard_sync" -> p?.str("text")?.let { ClipboardService.applyRemoteClip(it) }
+            "notification_reply" -> {
+                val key = p?.str("notificationId") ?: return
+                NotificationListenerService.replyToNotification(key, p.str("replyText") ?: "")
             }
-
-            is ProtocolMessage.ClipboardSync -> {
-                Log.d(TAG, "Received remote clipboard update")
-                ClipboardService.applyRemoteClip(msg.text)
+            "notification_dismiss" -> p?.str("notificationId")?.let { NotificationListenerService.dismiss(it) }
+            "touch_event" -> p?.let {
+                InputService.touch(it.int("action") ?: return, it.float("normalizedX") ?: return, it.float("normalizedY") ?: return)
             }
-
-            is ProtocolMessage.NotificationReply -> {
-                Log.i(TAG, "Received remote notification reply for key: ${msg.key}")
-                NotificationListenerService.replyToNotification(msg.key, msg.replyText)
+            "scroll_event" -> p?.let {
+                InputService.scroll(it.float("normalizedX") ?: return, it.float("normalizedY") ?: return,
+                    it.float("deltaX") ?: 0f, it.float("deltaY") ?: 0f)
             }
-
-            is ProtocolMessage.CallControl -> {
-                Log.i(TAG, "Received remote call control action: ${msg.action}")
-                CallBridgeService.handleRemoteCallControl(msg)
+            "navigation" -> p?.str("target")?.let { InputService.navigate(this, it) }
+            "key_event" -> p?.let {
+                InputService.key(it.int("keyCode") ?: return, it.int("action") ?: return, it.str("character"))
             }
-
-            is ProtocolMessage.StartMirroring -> {
-                Log.i(TAG, "Received StartMirroring command from Mac")
-                // Trigger screen capture service
-                val intent = Intent(this, ScreenCaptureService::class.java).apply {
-                    action = Constants.ACTION_START_SCREEN_CAPTURE
-                    msg.config?.let { putExtra(Constants.EXTRA_MIRROR_CONFIG, it) }
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(intent)
-                } else {
-                    startService(intent)
-                }
-            }
-
-            is ProtocolMessage.StopMirroring -> {
-                Log.i(TAG, "Received StopMirroring command from Mac")
-                val intent = Intent(this, ScreenCaptureService::class.java).apply {
-                    action = Constants.ACTION_STOP_SCREEN_CAPTURE
-                }
-                startService(intent)
-            }
-
-            is ProtocolMessage.InputEvent -> {
-                // Input injection placeholder (e.g. AccessibilityService / root input tap)
-                Log.d(TAG, "Received InputEvent: ${msg.action} at (${msg.x}, ${msg.y})")
-            }
-
-            else -> {
-                Log.d(TAG, "Unhandled message: $msg")
-            }
+            "find_phone" -> ringPhone()
+            "disconnect" -> disconnectCurrentClients()
+            else -> Log.d(TAG, "Unhandled message type: ${msg.type}")
         }
     }
+
+    /**
+     * Android needs the user to approve screen capture on the phone each time, so when the Mac
+     * connects we post a tap-to-start notification instead of leaving the Mac on a black screen.
+     */
+    private fun promptToStartMirroring(macName: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notificationManager.createNotificationChannel(
+                NotificationChannel(CHANNEL_MIRROR_PROMPT, "Start mirroring", NotificationManager.IMPORTANCE_HIGH)
+            )
+        }
+        val open = PendingIntent.getActivity(
+            this, 2,
+            Intent(this, MainActivity::class.java).setAction(MainActivity.ACTION_START_MIRRORING)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        notificationManager.notify(
+            NOTIFICATION_ID_MIRROR_PROMPT,
+            NotificationCompat.Builder(this, CHANNEL_MIRROR_PROMPT)
+                .setSmallIcon(android.R.drawable.presence_video_online)
+                .setContentTitle("$macName wants to mirror your screen")
+                .setContentText("Tap to start screen mirroring")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+        )
+    }
+
+    /** Plays the alarm sound for 15 seconds so the phone can be found, even on silent. */
+    private fun ringPhone() {
+        val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
+            ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
+        val ringtone = android.media.RingtoneManager.getRingtone(this, uri) ?: return
+        ringtone.audioAttributes = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+            .build()
+        ringtone.play()
+        serviceScope.launch { delay(15_000); ringtone.stop() }
+    }
+
+    private fun JsonObject.str(key: String) = this[key]?.jsonPrimitive?.content
+    private fun JsonObject.int(key: String) = this[key]?.jsonPrimitive?.intOrNull
+    private fun JsonObject.float(key: String) = this[key]?.jsonPrimitive?.floatOrNull
 
     /**
      * Periodic heartbeat loop to monitor link liveness and measure RTT latency.
@@ -359,20 +365,11 @@ class ConnectionService : Service() {
     }
 
     fun sendProtocolMessage(message: ProtocolMessage) {
-        val json = ProtocolMessage.toJson(message)
+        val body = MacWire.encode(message) ?: return
         serviceScope.launch(Dispatchers.IO) {
             for (writer in activeWriters) {
-                runCatching {
-                    writer.println(json)
-                }
+                runCatching { MacWire.writeFrame(writer, body) }
             }
-        }
-    }
-
-    private fun sendMessageDirect(writer: PrintWriter, message: ProtocolMessage) {
-        val json = ProtocolMessage.toJson(message)
-        runCatching {
-            writer.println(json)
         }
     }
 
@@ -425,6 +422,8 @@ class ConnectionService : Service() {
 
     companion object {
         private const val TAG = "ConnectionService"
+        private const val CHANNEL_MIRROR_PROMPT = "droidlink_channel_mirror_prompt"
+        private const val NOTIFICATION_ID_MIRROR_PROMPT = 1004
 
         @Volatile
         var instance: ConnectionService? = null

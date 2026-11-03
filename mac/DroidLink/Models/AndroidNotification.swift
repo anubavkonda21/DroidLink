@@ -42,6 +42,9 @@ public struct AndroidNotification: Identifiable, Codable, Equatable, Hashable, S
     /// Available remote actions (e.g. "Mark as Read", "Archive", "Reply")
     public var actions: [NotificationAction]
 
+    /// Show without sound (incoming-call caller ID). Optional so older payloads still decode.
+    public var isSilent: Bool? = nil
+
     // MARK: - Nested Action Model
 
     public struct NotificationAction: Identifiable, Codable, Equatable, Hashable, Sendable {

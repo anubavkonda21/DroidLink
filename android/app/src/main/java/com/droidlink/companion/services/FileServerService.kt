@@ -219,49 +219,40 @@ class FileServerService : Service() {
             updateProgress(TransferProgress(fileName = fileName, totalBytes = fileSize, isUploading = true))
 
             try {
-                // Calculate CRC32 first
-                val crc32 = CRC32()
-                contentResolver.openInputStream(uri)?.use { stream ->
-                    val buffer = ByteArray(64 * 1024)
-                    var bytesRead: Int
-                    while (stream.read(buffer).also { bytesRead = it } != -1) {
-                        crc32.update(buffer, 0, bytesRead)
-                    }
+                // Copy into Downloads/DroidLink, then tell the Mac to pull it over adb (USB or wireless adb).
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/DroidLink")
                 }
-                val checksum = crc32.value
-
-                Socket(targetHost, targetPort).use { socket ->
-                    val dos = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
-                    val dis = DataInputStream(BufferedInputStream(socket.getInputStream()))
-
-                    dos.writeUTF(fileName)
-                    dos.writeLong(fileSize)
-                    dos.writeLong(checksum)
-                    dos.flush()
-
-                    contentResolver.openInputStream(uri)?.use { stream ->
+                val target = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: error("Could not create file in Downloads")
+                var transferred = 0L
+                contentResolver.openInputStream(uri)?.use { input ->
+                    contentResolver.openOutputStream(target)?.use { output ->
                         val buffer = ByteArray(64 * 1024)
                         var bytesRead: Int
-                        var transferred = 0L
-                        while (stream.read(buffer).also { bytesRead = it } != -1) {
-                            dos.write(buffer, 0, bytesRead)
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
                             transferred += bytesRead
                             updateProgress(TransferProgress(fileName = fileName, bytesTransferred = transferred, totalBytes = fileSize, isUploading = true))
                         }
-                        dos.flush()
                     }
+                } ?: error("Could not read the selected file")
 
-                    val serverSuccess = dis.readBoolean()
-                    val serverMsg = dis.readUTF()
+                // Android may rename on clash ("name (1).ext"), so send the name it actually used
+                val savedName = contentResolver.query(target, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: fileName
 
-                    if (serverSuccess) {
-                        Log.i(TAG, "File sent successfully to Mac: $serverMsg")
-                        updateProgress(TransferProgress(fileName = fileName, bytesTransferred = fileSize, totalBytes = fileSize, isUploading = true, isComplete = true))
-                    } else {
-                        Log.e(TAG, "Server rejected file: $serverMsg")
-                        updateProgress(TransferProgress(fileName = fileName, isUploading = true, error = serverMsg))
-                    }
-                }
+                ConnectionService.broadcastProtocolMessage(
+                    ProtocolMessage.FileTransferOffer(
+                        fileId = java.util.UUID.randomUUID().toString(),
+                        fileName = savedName,
+                        fileSize = transferred,
+                        checksumCrc32 = 0
+                    )
+                )
+                Log.i(TAG, "Saved $savedName to Downloads/DroidLink and offered it to the Mac")
+                updateProgress(TransferProgress(fileName = savedName, bytesTransferred = transferred, totalBytes = transferred, isUploading = true, isComplete = true))
             } catch (e: Exception) {
                 Log.e(TAG, "Failed sending file to Mac", e)
                 updateProgress(TransferProgress(fileName = fileName, isUploading = true, error = e.localizedMessage))

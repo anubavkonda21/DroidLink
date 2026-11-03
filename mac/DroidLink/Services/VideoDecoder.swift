@@ -70,6 +70,7 @@ public final class VideoDecoder: @unchecked Sendable {
     public func reset() {
         decoderQueue.async { [weak self] in
             self?.invalidateSession()
+            self?.pendingStream.removeAll()
         }
     }
 
@@ -93,19 +94,22 @@ public final class VideoDecoder: @unchecked Sendable {
 
     // MARK: - Annex B Parser
 
+    /// NAL bytes not yet terminated by a following start code (TCP chunks split NAL units)
+    private var pendingStream = Data()
+
     private func parseAnnexBPackets(_ data: Data) {
-        let count = data.count
+        pendingStream.append(data)
+        let buffer = pendingStream
+        let count = buffer.count
         guard count >= 4 else { return }
 
-        data.withUnsafeBytes { rawBuffer in
+        var nalStart = -1
+        var lastStartCode = -1
+
+        buffer.withUnsafeBytes { rawBuffer in
             guard let ptr = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-
-            var nalStart = -1
-            var nalLength = 0
             var i = 0
-
             while i < count - 3 {
-                // Check for 4-byte start code (0x00, 0x00, 0x00, 0x01)
                 var startCodeLen = 0
                 if ptr[i] == 0 && ptr[i+1] == 0 && ptr[i+2] == 0 && ptr[i+3] == 1 {
                     startCodeLen = 4
@@ -114,29 +118,22 @@ public final class VideoDecoder: @unchecked Sendable {
                 }
 
                 if startCodeLen > 0 {
-                    if nalStart != -1 {
-                        let nalEnd = i
-                        nalLength = nalEnd - nalStart
-                        if nalLength > 0 {
-                            let nalSubdata = data.subdata(in: nalStart..<nalEnd)
-                            self.handleNALUnit(nalSubdata, presentationTime: CMTime(value: self.frameCount, timescale: 60))
-                            self.frameCount += 1
-                        }
+                    if nalStart != -1 && i > nalStart {
+                        self.handleNALUnit(buffer.subdata(in: nalStart..<i), presentationTime: CMTime(value: self.frameCount, timescale: 60))
+                        self.frameCount += 1
                     }
+                    lastStartCode = i
                     nalStart = i + startCodeLen
                     i += startCodeLen
                 } else {
                     i += 1
                 }
             }
-
-            // Remainder NAL unit
-            if nalStart != -1 && nalStart < count {
-                let nalSubdata = data.subdata(in: nalStart..<count)
-                self.handleNALUnit(nalSubdata, presentationTime: CMTime(value: self.frameCount, timescale: 60))
-                self.frameCount += 1
-            }
         }
+
+        // Keep the unfinished NAL (from its start code) for the next chunk
+        pendingStream = lastStartCode == -1 ? buffer : buffer.subdata(in: lastStartCode..<count)
+        if pendingStream.count > 8 * 1024 * 1024 { pendingStream.removeAll() } // garbage guard
     }
 
     // MARK: - NAL Unit Dispatcher
@@ -356,15 +353,18 @@ public final class VideoDecoder: @unchecked Sendable {
 
         guard sampleStatus == noErr, let sb = sampleBuffer else { return }
 
+        // Plain decode call: the session was created with a callback record, which the
+        // block-based (outputHandler) variant refuses, so frames were silently never decoded.
         var flags: VTDecodeInfoFlags = []
-        VTDecompressionSessionDecodeFrame(
+        let status = VTDecompressionSessionDecodeFrame(
             session,
             sampleBuffer: sb,
             flags: [._EnableAsynchronousDecompression],
+            frameRefcon: nil,
             infoFlagsOut: &flags
-        ) { [weak self] status, infoFlags, imageBuffer, presentationTimeStamp, presentationDuration in
-            guard let self = self, status == noErr, let pixelBuffer = imageBuffer else { return }
-            self.delegate?.videoDecoder(self, didOutputPixelBuffer: pixelBuffer, presentationTimestamp: presentationTimeStamp)
+        )
+        if status != noErr {
+            delegate?.videoDecoder(self, didFailWithError: NSError(domain: "VideoDecoder", code: Int(status)))
         }
     }
 

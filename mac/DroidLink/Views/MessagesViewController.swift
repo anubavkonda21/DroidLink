@@ -11,11 +11,10 @@ import AppKit
 /// Messages view controller synchronizing Android SMS/MMS conversations with native macOS styling,
 /// real-time incoming call alerts, and inline text composition.
 public final class MessagesViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
-    private var conversations: [Conversation] = Conversation.mockConversations
-    private var selectedConversation: Conversation? = Conversation.mockConversations.first
+    private var conversations: [Conversation] = [] // shortcut: SMS sync isn't wired to the phone yet
+    private var selectedConversation: Conversation?
     private var searchQuery: String = ""
 
-    private var callBanner: NSView!
     private var splitView: NSSplitView!
     private var conversationsTableView: NSTableView!
     private var messagesTableView: NSTableView!
@@ -40,96 +39,14 @@ public final class MessagesViewController: NSViewController, NSTableViewDataSour
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         self.view = root
 
-        setupCallBanner()
         setupSplitView()
 
         NSLayoutConstraint.activate([
-            callBanner.topAnchor.constraint(equalTo: root.topAnchor),
-            callBanner.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            callBanner.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            callBanner.heightAnchor.constraint(equalToConstant: 60),
-
-            splitView.topAnchor.constraint(equalTo: callBanner.bottomAnchor),
+            splitView.topAnchor.constraint(equalTo: root.topAnchor),
             splitView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         ])
-    }
-
-    // MARK: - Incoming Call Banner
-
-    private func setupCallBanner() {
-        callBanner = NSView()
-        callBanner.wantsLayer = true
-        callBanner.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        callBanner.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(callBanner)
-
-        let sep = NSBox()
-        sep.boxType = .separator
-        sep.translatesAutoresizingMaskIntoConstraints = false
-        callBanner.addSubview(sep)
-
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.spacing = 14
-        stack.alignment = .centerY
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        callBanner.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: callBanner.leadingAnchor, constant: 18),
-            stack.trailingAnchor.constraint(equalTo: callBanner.trailingAnchor, constant: -18),
-            stack.centerYAnchor.constraint(equalTo: callBanner.centerYAnchor),
-
-            sep.leadingAnchor.constraint(equalTo: callBanner.leadingAnchor),
-            sep.trailingAnchor.constraint(equalTo: callBanner.trailingAnchor),
-            sep.bottomAnchor.constraint(equalTo: callBanner.bottomAnchor),
-            sep.heightAnchor.constraint(equalToConstant: 1)
-        ])
-
-        let icon = NSImageView(image: NSImage(systemSymbolName: "phone.fill", accessibilityDescription: nil) ?? NSImage())
-        icon.contentTintColor = .systemGreen
-        icon.widthAnchor.constraint(equalToConstant: 24).isActive = true
-        icon.heightAnchor.constraint(equalToConstant: 24).isActive = true
-        stack.addArrangedSubview(icon)
-
-        let labelStack = NSStackView()
-        labelStack.orientation = .vertical
-        labelStack.alignment = .leading
-        labelStack.spacing = 2
-
-        let callTitle = NSTextField(labelWithString: "Incoming Call: Sarah Connor")
-        callTitle.font = .systemFont(ofSize: 13, weight: .bold)
-        labelStack.addArrangedSubview(callTitle)
-
-        let callSub = NSTextField(labelWithString: "+1 (555) 234-5678")
-        callSub.font = .systemFont(ofSize: 11)
-        callSub.textColor = .secondaryLabelColor
-        labelStack.addArrangedSubview(callSub)
-
-        stack.addArrangedSubview(labelStack)
-
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        stack.addArrangedSubview(spacer)
-
-        let declineBtn = NSButton(title: "Decline", target: self, action: #selector(declineCallClicked(_:)))
-        declineBtn.bezelStyle = .rounded
-        stack.addArrangedSubview(declineBtn)
-
-        let acceptBtn = NSButton(title: "Accept", target: self, action: #selector(acceptCallClicked(_:)))
-        acceptBtn.bezelStyle = .rounded
-        acceptBtn.keyEquivalent = "\r"
-        stack.addArrangedSubview(acceptBtn)
-    }
-
-    @objc private func declineCallClicked(_ sender: NSButton) {
-        callBanner.isHidden = true
-    }
-
-    @objc private func acceptCallClicked(_ sender: NSButton) {
-        callBanner.isHidden = true
     }
 
     // MARK: - Split View

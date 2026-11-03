@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import AppKit
 import UserNotifications
 
 extension NotificationBridge {
@@ -50,10 +51,6 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
         requestAuthorization()
         loadMutedPackages()
 
-        // Populate with mock items initially if empty
-        if notifications.isEmpty {
-            self.notifications = AndroidNotification.mockNotifications
-        }
     }
 
     // MARK: - UNUserNotificationCenter Setup
@@ -69,6 +66,21 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
                 print("Notification authorization failed: \(error)")
+            }
+            // Phone notifications are useless if macOS blocks our banners; say so instead of failing silently
+            center.getNotificationSettings { settings in
+                guard settings.authorizationStatus != .authorized else { return }
+                DispatchQueue.main.async {
+                    let alert = NSAlert()
+                    alert.messageText = "Turn on notifications for DroidLink"
+                    alert.informativeText = "macOS is blocking DroidLink's notifications, so phone notifications and calls can't appear. In the next window, select DroidLink and switch on Allow Notifications."
+                    alert.addButton(withTitle: "Open Notification Settings")
+                    alert.addButton(withTitle: "Later")
+                    if alert.runModal() == .alertFirstButtonReturn,
+                       let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
             }
         }
     }
@@ -120,6 +132,17 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
             }
 
             self.postMacSystemNotification(notification)
+            if notification.isSilent == true { self.pulseTrackpadForCall() }
+        }
+    }
+
+    /// Macs have no vibration motor; the Force Touch trackpad's haptic pulse is the closest thing.
+    /// It is only felt while a finger is resting on the trackpad.
+    private func pulseTrackpadForCall() {
+        for i in 0..<6 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.35) {
+                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            }
         }
     }
 
@@ -149,7 +172,7 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
             "appPackage": notification.appPackage ?? ""
         ]
 
-        if isSoundEnabled {
+        if isSoundEnabled && notification.isSilent != true {
             content.sound = .default
         }
 

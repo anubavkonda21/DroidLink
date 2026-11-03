@@ -289,12 +289,28 @@ public final class ConnectionManager: @unchecked Sendable {
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
         let conn = NWConnection(to: endpoint, using: .tcp)
         conn.stateUpdateHandler = { [weak self] state in
-            if state == .ready {
-                self?.receiveVideoData()
+            switch state {
+            case .ready:
+                self?.receiveVideoData(conn, host: host, port: port)
+            case .failed:
+                self?.retryVideoSocket(after: conn, host: host, port: port)
+            default:
+                break
             }
         }
         conn.start(queue: networkQueue)
         self.videoConnection = conn
+    }
+
+    /// The phone only serves video once the user approves screen capture there, which can be after
+    /// the Mac connects; keep retrying while the control channel is up.
+    private func retryVideoSocket(after old: NWConnection, host: String, port: UInt16) {
+        networkQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self = self, self.controlConnection != nil, self.videoConnection === old else { return }
+            old.cancel()
+            self.videoDecoder.reset()
+            self.startVideoSocket(host: host, port: port)
+        }
     }
 
     private func startAudioSocket(host: String, port: UInt16) {
@@ -363,6 +379,11 @@ public final class ConnectionManager: @unchecked Sendable {
             case .notificationPost:
                 let notification = try envelope.decodePayload(AndroidNotification.self)
                 notificationBridge.receiveNotification(notification)
+            case .fileTransferInit:
+                // Phone saved the file in its Downloads; pull it over adb (USB or wireless adb)
+                let offer = try envelope.decodePayload(FileTransferInitPayload.self)
+                let remotePath = (offer.destinationFolder as NSString).appendingPathComponent(offer.fileName)
+                fileTransferService.pullFile(remotePath: remotePath, fileSize: offer.fileSize)
             case .heartbeat:
                 // Calculate RTT
                 let now = Date().timeIntervalSince1970
@@ -378,16 +399,18 @@ public final class ConnectionManager: @unchecked Sendable {
         }
     }
 
-    private func receiveVideoData() {
-        videoConnection?.receive(minimumIncompleteLength: 1, maximumLength: 131072) { [weak self] data, _, isComplete, error in
+    private func receiveVideoData(_ conn: NWConnection, host: String, port: UInt16) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 131072) { [weak self] data, _, isComplete, error in
             guard let self = self else { return }
 
             if let data = data, !data.isEmpty {
                 self.videoDecoder.processRawStreamData(data)
             }
 
-            if !isComplete && error == nil {
-                self.receiveVideoData()
+            if isComplete || error != nil {
+                self.retryVideoSocket(after: conn, host: host, port: port)
+            } else {
+                self.receiveVideoData(conn, host: host, port: port)
             }
         }
     }

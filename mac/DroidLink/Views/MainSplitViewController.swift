@@ -64,6 +64,7 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
 
     public override func viewDidLoad() {
         super.viewDidLoad()
+        if ScrcpyToolbar.scrcpyPID() != nil { ScrcpyToolbar.shared.start() } // mirror already open
         splitView.isVertical = true
         splitView.dividerStyle = .thin
 
@@ -104,6 +105,8 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
         sidebarTableView.addTableColumn(col)
         sidebarTableView.dataSource = self
         sidebarTableView.delegate = self
+        sidebarTableView.target = self
+        sidebarTableView.action = #selector(sidebarClicked(_:))
         sidebarTableView.rowHeight = 40
         scroll.documentView = sidebarTableView
 
@@ -189,6 +192,50 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
         item.minimumThickness = 500
         detailItem = item
         addSplitViewItem(item)
+    }
+
+    // Click action (not selection change) so re-clicking Mirror works and startup auto-select doesn't launch.
+    @objc private func sidebarClicked(_ sender: NSTableView) {
+        guard sender.clickedRow == NavigationSection.mirror.rawValue else { return }
+        launchScrcpyMirror()
+    }
+
+    private func launchScrcpyMirror() {
+        ScrcpyToolbar.shared.start() // nav bar follows the scrcpy window once it appears
+        if let pid = ScrcpyToolbar.scrcpyPID() {
+            NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateAllWindows])
+            return // already mirroring; never start a second one
+        }
+        let script = "/Users/anubavkonda/Downloads/Screen mirror/Mirror Phone.command"
+        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("droidlink-mirror.log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh") // the script uses zsh-only syntax
+        p.arguments = [script]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        p.environment = env
+        p.standardInput = FileHandle.nullDevice
+        if let log = try? FileHandle(forWritingTo: logURL) {
+            p.standardOutput = log
+            p.standardError = log
+        }
+        p.terminationHandler = { proc in
+            guard proc.terminationStatus != 0 else { return }
+            let tail = ((try? String(contentsOf: logURL, encoding: .utf8)) ?? "")
+                .split(separator: "\n").suffix(6).joined(separator: "\n")
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "Couldn't start phone mirroring"
+                alert.informativeText = tail.isEmpty ? "The mirror script exited with code \(proc.terminationStatus)." : tail
+                alert.runModal()
+            }
+        }
+        do { try p.run() } catch {
+            let alert = NSAlert(error: error)
+            alert.runModal()
+        }
     }
 
     @objc private func openWizardClicked(_ sender: NSButton) {

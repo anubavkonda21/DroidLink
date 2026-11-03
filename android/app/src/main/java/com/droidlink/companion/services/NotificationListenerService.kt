@@ -17,6 +17,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.os.Build
 import android.os.Bundle
 import android.service.notification.NotificationListenerService as AndroidNotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -90,6 +91,16 @@ class NotificationListenerService : AndroidNotificationListenerService() {
             return
         }
 
+        // Calls from any app (phone, WhatsApp, Telegram, Meet...) use the call category or a full-screen ringing UI.
+        // Only the ringing one is forwarded (as a silent caller-ID alert); the "ongoing call" one is skipped.
+        val ringing = notification.fullScreenIntent != null ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                extras.getInt(Notification.EXTRA_CALL_TYPE) == Notification.CallStyle.CALL_TYPE_INCOMING)
+        val looksLikeCall = notification.category == Notification.CATEGORY_CALL ||
+            (ringing && "$title $text".contains("call", ignoreCase = true))
+        if (looksLikeCall && !ringing) return
+        val isIncomingCall = looksLikeCall && ringing
+
         val packageManager = applicationContext.packageManager
         val appName = runCatching {
             val appInfo = packageManager.getApplicationInfo(packageName, 0)
@@ -112,7 +123,8 @@ class NotificationListenerService : AndroidNotificationListenerService() {
             timestamp = sbn.postTime,
             hasReplyAction = hasReplyAction,
             key = sbn.key,
-            iconBase64 = iconBase64
+            iconBase64 = iconBase64,
+            isCall = isIncomingCall
         )
 
         Log.d(TAG, "Forwarding notification from $appName: $title")
@@ -220,6 +232,11 @@ class NotificationListenerService : AndroidNotificationListenerService() {
         fun replyToNotification(key: String, replyText: String): Boolean {
             val current = instance
             return current?.sendReply(key, replyText) ?: false
+        }
+
+        /** Clears a notification on the phone after it was dismissed on the Mac. */
+        fun dismiss(key: String) {
+            runCatching { instance?.cancelNotification(key) }
         }
     }
 }
