@@ -259,13 +259,10 @@ public final class DashboardViewController: NSViewController {
             let button = GlassTileButton(title: title, target: self, action: action)
             button.isBordered = false // the convenience init re-enables the default bezel
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(symbolConfig)
-            button.imagePosition = .imageAbove
-            button.imageHugsTitle = true // centre icon + label together instead of pinning the icon to the top
             button.setContentHuggingPriority(.defaultLow, for: .horizontal)
             button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             button.contentTintColor = .controlAccentColor
             button.toolTip = tip
-            button.heightAnchor.constraint(equalToConstant: 64).isActive = true
             btnRow.addArrangedSubview(button)
             if action == #selector(webcamClicked(_:)) { webcamButton = button }
             if let first = btnRow.arrangedSubviews.first, first !== button {
@@ -620,6 +617,41 @@ final class GlassTileButton: NSButton {
     override func mouseExited(with event: NSEvent) { hovering = false }
 
     override var isHighlighted: Bool { didSet { updateFill() } }
+
+    // Fixed height and our own drawing, so every tile is the same size with the icon and label
+    // centred identically (the cell's imageAbove layout shifts per symbol and per title).
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 72) }
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero } // the cell adds per-symbol insets otherwise
+
+    override func draw(_ dirtyRect: NSRect) {
+        let tint = contentTintColor ?? .controlAccentColor
+        let icon = image?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 20, weight: .regular).applying(.init(hierarchicalColor: tint)))
+        let iconBox = NSSize(width: 30, height: 26) // same box for every symbol
+        let centred = NSMutableParagraphStyle()
+        centred.alignment = .center
+        centred.lineBreakMode = .byTruncatingTail
+        let text = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: tint,
+            .paragraphStyle: centred
+        ])
+        let textSize = text.size()
+        let gap: CGFloat = 6
+        let top = (bounds.height - iconBox.height - gap - textSize.height) / 2
+        // keep each symbol's aspect ratio inside the shared box
+        if let icon {
+            let scale = min(iconBox.width / icon.size.width, iconBox.height / icon.size.height, 1)
+            let size = NSSize(width: icon.size.width * scale, height: icon.size.height * scale)
+            let boxY = isFlipped ? top : bounds.height - top - iconBox.height
+            icon.draw(in: NSRect(x: (bounds.width - size.width) / 2, y: boxY + (iconBox.height - size.height) / 2,
+                                 width: size.width, height: size.height),
+                      from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+        let textTop = top + iconBox.height + gap
+        let textY = isFlipped ? textTop : bounds.height - textTop - textSize.height
+        text.draw(in: NSRect(x: 4, y: textY, width: bounds.width - 8, height: textSize.height))
+    }
 
     private func updateFill() {
         let alpha: CGFloat = isHighlighted ? 0.04 : hovering ? 0.16 : 0.08

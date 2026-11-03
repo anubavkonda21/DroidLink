@@ -181,7 +181,9 @@ public final class ConnectionManager: @unchecked Sendable {
 
         Task {
             do {
-                if let serial = device.adbSerial ?? adbService.devices.first(where: { $0.state == .device })?.serial {
+                // Prefer the Wi-Fi adb serial ("ip:port") so the link survives unplugging the cable
+                let ready = adbService.devices.filter { $0.state == .device }
+                if let serial = ready.first(where: { $0.serial.contains(":") })?.serial ?? device.adbSerial ?? ready.first?.serial {
                     // USB / ADB transport (preferred)
                     try await connectViaAdb(serial: serial)
                 } else if let ip = device.ipAddress, let port = device.port {
