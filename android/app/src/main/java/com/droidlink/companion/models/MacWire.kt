@@ -71,6 +71,11 @@ object MacWire {
             is ProtocolMessage.MacCommand -> "mac_command" to buildJsonObject { put("action", message.action) }
             else -> return null
         }
+        return encodeRaw(type, payload, nowMs)
+    }
+
+    /** Envelope for a type with no ProtocolMessage class (e.g. "sms_list"). */
+    fun encodeRaw(type: String, payload: JsonObject?, nowMs: Long = System.currentTimeMillis()): ByteArray {
         val envelope = buildJsonObject {
             put("type", type)
             put("timestamp", nowMs / 1000.0)

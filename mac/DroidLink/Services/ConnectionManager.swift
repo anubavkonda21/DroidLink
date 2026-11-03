@@ -391,6 +391,8 @@ public final class ConnectionManager: @unchecked Sendable {
                 let offer = try envelope.decodePayload(FileTransferInitPayload.self)
                 let remotePath = (offer.destinationFolder as NSString).appendingPathComponent(offer.fileName)
                 fileTransferService.pullFile(remotePath: remotePath, fileSize: offer.fileSize)
+            case .smsList:
+                SMSStore.shared.apply(try envelope.decodePayload(SMSListPayload.self))
             case .macCommand:
                 let command = try envelope.decodePayload(MacCommandPayload.self)
                 DispatchQueue.main.async {

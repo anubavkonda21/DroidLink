@@ -5,442 +5,785 @@
 //  Created for DroidLink macOS Client.
 //  Copyright © 2026 DroidLink. All rights reserved.
 //
+//  Apple Messages-style page for the phone's SMS: conversation list on the left (fixed width),
+//  chat bubbles and a compose bar on the right. Data comes from SMSStore.
+//
 
 import AppKit
 
-/// Messages view controller synchronizing Android SMS/MMS conversations with native macOS styling,
-/// real-time incoming call alerts, and inline text composition.
-public final class MessagesViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
-    private var conversations: [Conversation] = [] // shortcut: SMS sync isn't wired to the phone yet
-    private var selectedConversation: Conversation?
-    private var searchQuery: String = ""
+public final class MessagesViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+    private var store: SMSStore { SMSStore.shared }
+    private var selectedNumber: String?
+    private var searchQuery = ""
 
-    private var splitView: NSSplitView!
-    private var conversationsTableView: NSTableView!
-    private var messagesTableView: NSTableView!
+    // left
     private var searchField: NSSearchField!
+    private var conversationsTableView: NSTableView!
+    private var listStatusView: StatusOverlay!
 
-    private var recipientTitleLabel: NSTextField!
-    private var recipientSubLabel: NSTextField!
-    private var composeTextField: NSTextField!
+    // right
+    private var headerAvatar: AvatarView!
+    private var headerNameLabel: NSTextField!
+    private var headerNumberLabel: NSTextField!
+    private var threadScroll: NSScrollView!
+    private var threadStack: NSStackView!
+    private var threadPlaceholder: NSTextField!
+    private var composeField: NSTextField!
+    private var sendButton: NSButton!
+    private var composeBar: NSView!
+    private var header: NSView!
+    private var lastThreadWidth: CGFloat = 0
 
     private var filteredConversations: [Conversation] {
-        if searchQuery.isEmpty {
-            return conversations
-        } else {
-            return conversations.filter {
-                $0.contactName.localizedCaseInsensitiveContains(searchQuery) ||
-                $0.contactNumber.contains(searchQuery)
-            }
+        guard !searchQuery.isEmpty else { return store.conversations }
+        return store.conversations.filter {
+            $0.contactName.localizedCaseInsensitiveContains(searchQuery) ||
+            $0.contactNumber.contains(searchQuery) ||
+            $0.messages.contains { $0.body.localizedCaseInsensitiveContains(searchQuery) }
         }
     }
 
-    public override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        self.view = root
+    private var selectedConversation: Conversation? {
+        guard let n = selectedNumber else { return nil }
+        return store.conversations.first { $0.contactNumber == n }
+    }
 
-        setupSplitView()
+    // MARK: - Lifecycle
+
+    public override func loadView() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        view = root
+
+        let left = makeListPane()
+        let right = makeThreadPane()
+        let divider = NSBox()
+        divider.boxType = .separator
+        [left, divider, right].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; root.addSubview($0) }
 
         NSLayoutConstraint.activate([
-            splitView.topAnchor.constraint(equalTo: root.topAnchor),
-            splitView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor)
+            left.topAnchor.constraint(equalTo: root.topAnchor),
+            left.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            left.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            left.widthAnchor.constraint(equalToConstant: 300),
+
+            divider.topAnchor.constraint(equalTo: root.topAnchor),
+            divider.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            divider.leadingAnchor.constraint(equalTo: left.trailingAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+
+            right.topAnchor.constraint(equalTo: root.topAnchor),
+            right.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            right.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
+            right.trailingAnchor.constraint(equalTo: root.trailingAnchor)
         ])
+
+        NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: SMSStore.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(connectionChanged), name: ConnectionManager.didChangeStatusNotification, object: nil)
+        reloadAll()
     }
 
-    // MARK: - Split View
-
-    private func setupSplitView() {
-        splitView = NSSplitView()
-        splitView.isVertical = true
-        splitView.dividerStyle = .thin
-        splitView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(splitView)
-
-        // Left Pane: Conversations
-        let leftPane = createConversationsPane()
-        leftPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 240).isActive = true
-        splitView.addSubview(leftPane)
-
-        // Right Pane: Thread View
-        let rightPane = createThreadPane()
-        splitView.addSubview(rightPane)
-
-        splitView.setPosition(280, ofDividerAt: 0)
+    public override func viewWillAppear() {
+        super.viewWillAppear()
+        store.refresh()
+        reloadAll()
     }
 
-    private func createConversationsPane() -> NSView {
+    public override func viewDidLayout() {
+        super.viewDidLayout()
+        let w = threadScroll.contentView.bounds.width
+        if abs(w - lastThreadWidth) > 20 { // bubble widths depend on the pane width
+            lastThreadWidth = w
+            rebuildThread(scrollToEnd: false)
+        }
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func storeChanged() {
+        reloadAll()
+    }
+
+    @objc private func connectionChanged() {
+        DispatchQueue.main.async {
+            if ConnectionManager.shared.status.isConnectedOrMirroring, self.view.window != nil { self.store.refresh() }
+            self.reloadAll()
+        }
+    }
+
+    // MARK: - Left pane
+
+    private func makeListPane() -> NSView {
         let pane = NSView()
 
-        let searchContainer = NSView()
-        searchContainer.translatesAutoresizingMaskIntoConstraints = false
-        pane.addSubview(searchContainer)
-
         searchField = NSSearchField()
-        searchField.placeholderString = "Search contacts..."
+        searchField.placeholderString = "Search"
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
+        searchField.sendsSearchStringImmediately = true
+        searchField.controlSize = .large
         searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchContainer.addSubview(searchField)
+        pane.addSubview(searchField)
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
+        scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         pane.addSubview(scroll)
 
         conversationsTableView = NSTableView()
         conversationsTableView.headerView = nil
+        conversationsTableView.style = .inset
+        conversationsTableView.backgroundColor = .clear
+        conversationsTableView.intercellSpacing = NSSize(width: 0, height: 2)
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ConversationCol"))
+        col.resizingMask = .autoresizingMask
         conversationsTableView.addTableColumn(col)
+        conversationsTableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         conversationsTableView.dataSource = self
         conversationsTableView.delegate = self
-        conversationsTableView.rowHeight = 60
+        conversationsTableView.rowHeight = 64
         scroll.documentView = conversationsTableView
 
+        listStatusView = StatusOverlay()
+        listStatusView.translatesAutoresizingMaskIntoConstraints = false
+        listStatusView.onButton = { [weak self] in self?.store.refresh() }
+        pane.addSubview(listStatusView)
+
         NSLayoutConstraint.activate([
-            searchContainer.topAnchor.constraint(equalTo: pane.topAnchor),
-            searchContainer.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
-            searchContainer.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
-            searchContainer.heightAnchor.constraint(equalToConstant: 44),
+            searchField.topAnchor.constraint(equalTo: pane.topAnchor, constant: 14),
+            searchField.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 14),
+            searchField.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -14),
 
-            searchField.leadingAnchor.constraint(equalTo: searchContainer.leadingAnchor, constant: 12),
-            searchField.trailingAnchor.constraint(equalTo: searchContainer.trailingAnchor, constant: -12),
-            searchField.centerYAnchor.constraint(equalTo: searchContainer.centerYAnchor),
-
-            scroll.topAnchor.constraint(equalTo: searchContainer.bottomAnchor),
+            scroll.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10),
             scroll.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: pane.bottomAnchor)
-        ])
+            scroll.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
 
+            listStatusView.centerXAnchor.constraint(equalTo: pane.centerXAnchor),
+            listStatusView.centerYAnchor.constraint(equalTo: pane.centerYAnchor),
+            listStatusView.widthAnchor.constraint(equalTo: pane.widthAnchor, constant: -48)
+        ])
         return pane
     }
 
-    private func createThreadPane() -> NSView {
-        let pane = NSView()
+    // MARK: - Right pane
 
-        // Header
-        let header = NSView()
-        header.wantsLayer = true
-        header.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    private func makeThreadPane() -> NSView {
+        let pane = NSView()
+        pane.wantsLayer = true
+        pane.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+
+        // header: "To:" style, name centred like Messages
+        header = NSView()
         header.translatesAutoresizingMaskIntoConstraints = false
         pane.addSubview(header)
 
-        let sepTop = NSBox()
-        sepTop.boxType = .separator
-        sepTop.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(sepTop)
+        headerAvatar = AvatarView(size: 28)
+        headerNameLabel = NSTextField(labelWithString: "")
+        headerNameLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        headerNameLabel.lineBreakMode = .byTruncatingTail
+        headerNumberLabel = NSTextField(labelWithString: "")
+        headerNumberLabel.font = .systemFont(ofSize: 11)
+        headerNumberLabel.textColor = .secondaryLabelColor
 
-        let labelStack = NSStackView()
-        labelStack.orientation = .vertical
-        labelStack.alignment = .leading
-        labelStack.spacing = 2
-        labelStack.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(labelStack)
+        let names = NSStackView(views: [headerNameLabel, headerNumberLabel])
+        names.orientation = .vertical
+        names.alignment = .leading
+        names.spacing = 0
+        let headerStack = NSStackView(views: [headerAvatar, names])
+        headerStack.orientation = .horizontal
+        headerStack.spacing = 10
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(headerStack)
 
-        recipientTitleLabel = NSTextField(labelWithString: selectedConversation?.contactName ?? "")
-        recipientTitleLabel.font = .systemFont(ofSize: 14, weight: .bold)
-        labelStack.addArrangedSubview(recipientTitleLabel)
+        let headerSep = NSBox()
+        headerSep.boxType = .separator
+        headerSep.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(headerSep)
 
-        recipientSubLabel = NSTextField(labelWithString: selectedConversation?.contactNumber ?? "")
-        recipientSubLabel.font = .systemFont(ofSize: 11)
-        recipientSubLabel.textColor = .secondaryLabelColor
-        labelStack.addArrangedSubview(recipientSubLabel)
+        // thread
+        threadScroll = NSScrollView()
+        threadScroll.hasVerticalScroller = true
+        threadScroll.borderType = .noBorder
+        threadScroll.drawsBackground = false
+        threadScroll.translatesAutoresizingMaskIntoConstraints = false
+        pane.addSubview(threadScroll)
 
-        // Messages scroll / table
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .noBorder
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        pane.addSubview(scroll)
+        let doc = FlippedView()
+        doc.translatesAutoresizingMaskIntoConstraints = false
+        threadScroll.documentView = doc
 
-        messagesTableView = NSTableView()
-        messagesTableView.headerView = nil
-        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("MessageCol"))
-        messagesTableView.addTableColumn(col)
-        messagesTableView.dataSource = self
-        messagesTableView.delegate = self
-        messagesTableView.selectionHighlightStyle = .none
-        messagesTableView.rowHeight = 56
-        scroll.documentView = messagesTableView
+        threadStack = NSStackView()
+        threadStack.orientation = .vertical
+        threadStack.alignment = .leading
+        threadStack.spacing = 4
+        threadStack.translatesAutoresizingMaskIntoConstraints = false
+        doc.addSubview(threadStack)
 
-        // Compose bar at bottom
-        let composeBar = NSView()
-        composeBar.wantsLayer = true
-        composeBar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        threadPlaceholder = NSTextField(labelWithString: "")
+        threadPlaceholder.font = .systemFont(ofSize: 15, weight: .medium)
+        threadPlaceholder.textColor = .tertiaryLabelColor
+        threadPlaceholder.alignment = .center
+        threadPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+        pane.addSubview(threadPlaceholder)
+
+        // compose bar
+        composeBar = NSView()
         composeBar.translatesAutoresizingMaskIntoConstraints = false
         pane.addSubview(composeBar)
 
-        let sepBottom = NSBox()
-        sepBottom.boxType = .separator
-        sepBottom.translatesAutoresizingMaskIntoConstraints = false
-        composeBar.addSubview(sepBottom)
+        let capsule = NSView()
+        capsule.wantsLayer = true
+        capsule.layer?.cornerRadius = 16
+        capsule.layer?.borderWidth = 1
+        capsule.layer?.borderColor = NSColor.separatorColor.cgColor
+        capsule.translatesAutoresizingMaskIntoConstraints = false
+        composeBar.addSubview(capsule)
 
-        composeTextField = NSTextField()
-        composeTextField.placeholderString = "Type a message..."
-        composeTextField.target = self
-        composeTextField.action = #selector(sendMessageClicked(_:))
-        composeTextField.translatesAutoresizingMaskIntoConstraints = false
-        composeBar.addSubview(composeTextField)
+        composeField = NSTextField()
+        composeField.placeholderString = "Text Message"
+        composeField.isBordered = false
+        composeField.drawsBackground = false
+        composeField.focusRingType = .none
+        composeField.font = .systemFont(ofSize: 13)
+        composeField.usesSingleLineMode = false
+        composeField.cell?.wraps = true
+        composeField.cell?.isScrollable = false
+        composeField.maximumNumberOfLines = 5
+        composeField.delegate = self
+        composeField.translatesAutoresizingMaskIntoConstraints = false
+        capsule.addSubview(composeField)
 
-        let sendBtn = NSButton(title: "Send", target: self, action: #selector(sendMessageClicked(_:)))
-        sendBtn.bezelStyle = .rounded
-        sendBtn.keyEquivalent = "\r"
-        sendBtn.translatesAutoresizingMaskIntoConstraints = false
-        composeBar.addSubview(sendBtn)
+        sendButton = NSButton(image: NSImage(systemSymbolName: "arrow.up.circle.fill", accessibilityDescription: "Send")!,
+                              target: self, action: #selector(sendClicked(_:)))
+        sendButton.isBordered = false
+        sendButton.imageScaling = .scaleProportionallyUpOrDown
+        sendButton.contentTintColor = .droidAccent
+        sendButton.symbolConfiguration = .init(pointSize: 22, weight: .regular)
+        sendButton.translatesAutoresizingMaskIntoConstraints = false
+        capsule.addSubview(sendButton)
 
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: pane.topAnchor),
             header.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
-            header.heightAnchor.constraint(equalToConstant: 48),
+            header.heightAnchor.constraint(equalToConstant: 56),
+            headerStack.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            headerStack.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 20),
+            headerStack.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -20),
+            headerSep.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            headerSep.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            headerSep.bottomAnchor.constraint(equalTo: header.bottomAnchor),
 
-            labelStack.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 18),
-            labelStack.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            threadScroll.topAnchor.constraint(equalTo: header.bottomAnchor),
+            threadScroll.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
+            threadScroll.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
+            threadScroll.bottomAnchor.constraint(equalTo: composeBar.topAnchor),
 
-            sepTop.leadingAnchor.constraint(equalTo: header.leadingAnchor),
-            sepTop.trailingAnchor.constraint(equalTo: header.trailingAnchor),
-            sepTop.bottomAnchor.constraint(equalTo: header.bottomAnchor),
-            sepTop.heightAnchor.constraint(equalToConstant: 1),
+            doc.topAnchor.constraint(equalTo: threadScroll.contentView.topAnchor),
+            doc.leadingAnchor.constraint(equalTo: threadScroll.contentView.leadingAnchor),
+            doc.trailingAnchor.constraint(equalTo: threadScroll.contentView.trailingAnchor),
+            threadStack.topAnchor.constraint(equalTo: doc.topAnchor, constant: 16),
+            threadStack.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+            threadStack.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
+            threadStack.bottomAnchor.constraint(equalTo: doc.bottomAnchor, constant: -16),
 
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: composeBar.topAnchor),
+            threadPlaceholder.centerXAnchor.constraint(equalTo: pane.centerXAnchor),
+            threadPlaceholder.centerYAnchor.constraint(equalTo: pane.centerYAnchor),
 
             composeBar.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
             composeBar.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
             composeBar.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
-            composeBar.heightAnchor.constraint(equalToConstant: 52),
 
-            sepBottom.leadingAnchor.constraint(equalTo: composeBar.leadingAnchor),
-            sepBottom.trailingAnchor.constraint(equalTo: composeBar.trailingAnchor),
-            sepBottom.topAnchor.constraint(equalTo: composeBar.topAnchor),
-            sepBottom.heightAnchor.constraint(equalToConstant: 1),
+            capsule.topAnchor.constraint(equalTo: composeBar.topAnchor, constant: 10),
+            capsule.bottomAnchor.constraint(equalTo: composeBar.bottomAnchor, constant: -14),
+            capsule.leadingAnchor.constraint(equalTo: composeBar.leadingAnchor, constant: 20),
+            capsule.trailingAnchor.constraint(equalTo: composeBar.trailingAnchor, constant: -20),
+            capsule.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
 
-            composeTextField.leadingAnchor.constraint(equalTo: composeBar.leadingAnchor, constant: 16),
-            composeTextField.centerYAnchor.constraint(equalTo: composeBar.centerYAnchor),
-            composeTextField.trailingAnchor.constraint(equalTo: sendBtn.leadingAnchor, constant: -12),
+            composeField.leadingAnchor.constraint(equalTo: capsule.leadingAnchor, constant: 14),
+            composeField.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -6),
+            composeField.topAnchor.constraint(equalTo: capsule.topAnchor, constant: 7),
+            composeField.bottomAnchor.constraint(equalTo: capsule.bottomAnchor, constant: -7),
 
-            sendBtn.trailingAnchor.constraint(equalTo: composeBar.trailingAnchor, constant: -16),
-            sendBtn.centerYAnchor.constraint(equalTo: composeBar.centerYAnchor)
+            sendButton.trailingAnchor.constraint(equalTo: capsule.trailingAnchor, constant: -4),
+            sendButton.bottomAnchor.constraint(equalTo: capsule.bottomAnchor, constant: -4),
+            sendButton.widthAnchor.constraint(equalToConstant: 24),
+            sendButton.heightAnchor.constraint(equalToConstant: 24)
         ])
-
         return pane
     }
+
+    // MARK: - Reload
+
+    private func reloadAll() {
+        guard isViewLoaded else { return }
+        if selectedNumber == nil || selectedConversation == nil {
+            selectedNumber = filteredConversations.first?.contactNumber
+        }
+        conversationsTableView.reloadData()
+        if let n = selectedNumber, let row = filteredConversations.firstIndex(where: { $0.contactNumber == n }) {
+            conversationsTableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+        updateListStatus()
+        rebuildThread(scrollToEnd: true)
+    }
+
+    private func updateListStatus() {
+        let connected = ConnectionManager.shared.status.isConnectedOrMirroring
+        if !connected && store.conversations.isEmpty {
+            listStatusView.show(symbol: "iphone.slash", title: "Phone not connected",
+                                detail: "Connect your phone to see its messages.", button: nil)
+        } else if store.state == .permissionMissing {
+            listStatusView.show(symbol: "lock.shield", title: "Allow SMS access",
+                                detail: "On your phone, open DroidLink and allow SMS, or go to Settings › Apps › DroidLink › Permissions › SMS.",
+                                button: "Try Again")
+        } else if store.state == .loading && store.conversations.isEmpty {
+            listStatusView.show(symbol: nil, title: "Loading conversations…", detail: nil, button: nil, spinning: true)
+        } else if store.conversations.isEmpty {
+            listStatusView.show(symbol: "message", title: "No Messages",
+                                detail: store.state == .idle ? "Update DroidLink on your phone to sync texts." : nil,
+                                button: "Refresh")
+        } else if filteredConversations.isEmpty {
+            listStatusView.show(symbol: nil, title: "No Results", detail: nil, button: nil)
+        } else {
+            listStatusView.isHidden = true
+        }
+    }
+
+    private func rebuildThread(scrollToEnd: Bool) {
+        threadStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        guard let conv = selectedConversation else {
+            header.isHidden = true
+            composeBar.isHidden = true
+            threadPlaceholder.isHidden = store.conversations.isEmpty
+            threadPlaceholder.stringValue = "Select a conversation"
+            return
+        }
+        header.isHidden = false
+        composeBar.isHidden = false
+        threadPlaceholder.isHidden = true
+        headerAvatar.configure(name: conv.contactName, isNumberOnly: conv.contactName == conv.contactNumber)
+        headerNameLabel.stringValue = conv.contactName
+        headerNumberLabel.stringValue = conv.contactName == conv.contactNumber ? "Text Message" : conv.contactNumber
+        headerNumberLabel.isHidden = false
+        composeField.isEnabled = store.canSend
+        composeField.placeholderString = store.canSend ? "Text Message" : "Allow SMS sending on your phone to reply"
+        updateSendButton()
+
+        let width = max(320, threadScroll.contentView.bounds.width)
+        let maxBubble = min(520, width * 0.66)
+        let messages = conv.messages.sorted { $0.timestamp < $1.timestamp }
+        var previous: Message?
+        for msg in messages {
+            if previous == nil || msg.timestamp.timeIntervalSince(previous!.timestamp) > 3600 {
+                addArranged(DateSeparator(date: msg.timestamp), topGap: previous == nil ? 0 : 12)
+            }
+            let sameSide = previous != nil && previous!.isIncoming == msg.isIncoming
+            addArranged(BubbleRow(message: msg, maxWidth: maxBubble), topGap: sameSide ? 0 : 6)
+            previous = msg
+        }
+        if let last = messages.last, !last.isIncoming {
+            let caption: String
+            switch last.deliveryStatus {
+            case .failed: caption = "Not Delivered"
+            case .pending: caption = "Sending…"
+            default: caption = "Sent"
+            }
+            addArranged(StatusCaption(text: caption, failed: last.deliveryStatus == .failed), topGap: 0)
+        }
+
+        if scrollToEnd {
+            view.layoutSubtreeIfNeeded()
+            let doc = threadScroll.documentView!
+            let y = max(0, doc.bounds.height - threadScroll.contentView.bounds.height)
+            threadScroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+            threadScroll.reflectScrolledClipView(threadScroll.contentView)
+        }
+    }
+
+    private func addArranged(_ v: NSView, topGap: CGFloat) {
+        if topGap > 0, let last = threadStack.arrangedSubviews.last {
+            threadStack.setCustomSpacing(threadStack.spacing + topGap, after: last)
+        }
+        threadStack.addArrangedSubview(v)
+        v.widthAnchor.constraint(equalTo: threadStack.widthAnchor).isActive = true
+    }
+
+    // MARK: - Actions
 
     @objc private func searchChanged(_ sender: NSSearchField) {
         searchQuery = sender.stringValue
         conversationsTableView.reloadData()
-    }
-
-    @objc private func sendMessageClicked(_ sender: Any) {
-        let text = composeTextField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let conv = selectedConversation else { return }
-
-        let newMsg = Message(
-            conversationId: conv.id,
-            contactName: conv.contactName,
-            contactNumber: conv.contactNumber,
-            body: text,
-            timestamp: Date(),
-            isIncoming: false,
-            deliveryStatus: .sent
-        )
-
-        if let index = conversations.firstIndex(where: { $0.id == conv.id }) {
-            conversations[index].messages.append(newMsg)
-            selectedConversation = conversations[index]
+        if let n = selectedNumber, let row = filteredConversations.firstIndex(where: { $0.contactNumber == n }) {
+            conversationsTableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
-
-        composeTextField.stringValue = ""
-        messagesTableView.reloadData()
-        conversationsTableView.reloadData()
+        updateListStatus()
     }
 
-    // MARK: - NSTableViewDataSource & Delegate
+    @objc private func sendClicked(_ sender: Any?) {
+        let text = composeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let conv = selectedConversation, store.canSend else { return }
+        composeField.stringValue = ""
+        updateSendButton()
+        store.send(text, to: conv)
+    }
+
+    private func updateSendButton() {
+        let hasText = !composeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        sendButton.isEnabled = hasText && store.canSend
+        sendButton.contentTintColor = sendButton.isEnabled ? .droidAccent : .tertiaryLabelColor
+    }
+
+    public func controlTextDidChange(_ obj: Notification) {
+        updateSendButton()
+    }
+
+    /// Return sends, Option-Return adds a new line (like Messages).
+    public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+                textView.insertNewlineIgnoringFieldEditor(nil)
+            } else {
+                sendClicked(nil)
+            }
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Table
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        if tableView == conversationsTableView {
-            return filteredConversations.count
-        } else {
-            return selectedConversation?.messages.count ?? 0
-        }
+        filteredConversations.count
     }
 
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        if tableView == conversationsTableView {
-            guard row < filteredConversations.count else { return nil }
-            let conv = filteredConversations[row]
-
-            let cellId = NSUserInterfaceItemIdentifier("ConversationCell")
-            let cell: ConversationRowCell
-            if let reused = tableView.makeView(withIdentifier: cellId, owner: nil) as? ConversationRowCell {
-                cell = reused
-            } else {
-                cell = ConversationRowCell()
-                cell.identifier = cellId
-            }
-            cell.configure(with: conv)
-            return cell
-        } else {
-            guard let messages = selectedConversation?.messages, row < messages.count else { return nil }
-            let msg = messages[row]
-
-            let cellId = NSUserInterfaceItemIdentifier("MessageBubbleCell")
-            let cell: MessageBubbleCell
-            if let reused = tableView.makeView(withIdentifier: cellId, owner: nil) as? MessageBubbleCell {
-                cell = reused
-            } else {
-                cell = MessageBubbleCell()
-                cell.identifier = cellId
-            }
-            cell.configure(with: msg)
-            return cell
-        }
+        let list = filteredConversations
+        guard row < list.count else { return nil }
+        let id = NSUserInterfaceItemIdentifier("ConversationCell")
+        let cell = (tableView.makeView(withIdentifier: id, owner: nil) as? ConversationRowCell) ?? {
+            let c = ConversationRowCell(); c.identifier = id; return c
+        }()
+        cell.configure(with: list[row])
+        return cell
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
-        guard let table = notification.object as? NSTableView, table == conversationsTableView else { return }
-        let selectedRow = table.selectedRow
-        guard selectedRow >= 0 && selectedRow < filteredConversations.count else { return }
-
-        selectedConversation = filteredConversations[selectedRow]
-        recipientTitleLabel.stringValue = selectedConversation?.contactName ?? ""
-        recipientSubLabel.stringValue = selectedConversation?.contactNumber ?? ""
-        messagesTableView.reloadData()
+        let row = conversationsTableView.selectedRow
+        let list = filteredConversations
+        guard row >= 0, row < list.count else { return }
+        guard list[row].contactNumber != selectedNumber else { return }
+        selectedNumber = list[row].contactNumber
+        rebuildThread(scrollToEnd: true)
+        view.window?.makeFirstResponder(composeField)
     }
 }
 
-// MARK: - Conversation Row Cell
+// MARK: - Pieces
+
+/// Round avatar with initials on a grey gradient, like Contacts without a photo.
+private final class AvatarView: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private let icon = NSImageView()
+    private let gradient = CAGradientLayer()
+    private let side: CGFloat
+
+    init(size: CGFloat) {
+        side = size
+        super.init(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        wantsLayer = true
+        layer?.cornerRadius = size / 2
+        layer?.masksToBounds = true
+        gradient.colors = [NSColor(white: 0.66, alpha: 1).cgColor, NSColor(white: 0.52, alpha: 1).cgColor]
+        gradient.startPoint = CGPoint(x: 0.5, y: 1)
+        gradient.endPoint = CGPoint(x: 0.5, y: 0)
+        layer?.addSublayer(gradient)
+
+        label.font = .systemFont(ofSize: size * 0.4, weight: .semibold)
+        label.textColor = .white
+        label.alignment = .center
+        icon.image = NSImage(systemSymbolName: "person.fill", accessibilityDescription: nil)
+        icon.symbolConfiguration = .init(pointSize: size * 0.5, weight: .regular)
+        icon.contentTintColor = .white
+        [label, icon].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+            $0.centerXAnchor.constraint(equalTo: centerXAnchor).isActive = true
+            $0.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
+        }
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: size).isActive = true
+        heightAnchor.constraint(equalToConstant: size).isActive = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        gradient.frame = bounds
+    }
+
+    func configure(name: String, isNumberOnly: Bool) {
+        let initials = Conversation(contactName: name, contactNumber: "").initials
+        let usable = !isNumberOnly && initials.first?.isLetter == true
+        label.stringValue = usable ? initials : ""
+        label.isHidden = !usable
+        icon.isHidden = usable
+    }
+}
 
 private final class ConversationRowCell: NSTableCellView {
+    private let avatar = AvatarView(size: 40)
     private let nameLabel = NSTextField(labelWithString: "")
-    private let snippetLabel = NSTextField(labelWithString: "")
+    private let snippetLabel = NSTextField(wrappingLabelWithString: "")
     private let timeLabel = NSTextField(labelWithString: "")
-    private let avatarView = NSImageView()
+    private let unreadDot = NSView()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        setupViews()
-    }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private func setupViews() {
-        avatarView.image = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)
-        avatarView.contentTintColor = .droidAccent
-        avatarView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(avatarView)
+        unreadDot.wantsLayer = true
+        unreadDot.layer?.cornerRadius = 4
+        unreadDot.layer?.backgroundColor = NSColor.droidAccent.cgColor
 
         nameLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(nameLabel)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        snippetLabel.font = .systemFont(ofSize: 11)
+        timeLabel.font = .systemFont(ofSize: 11)
+        timeLabel.textColor = .secondaryLabelColor
+        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        snippetLabel.font = .systemFont(ofSize: 12)
         snippetLabel.textColor = .secondaryLabelColor
-        snippetLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(snippetLabel)
+        snippetLabel.maximumNumberOfLines = 2
+        snippetLabel.lineBreakMode = .byTruncatingTail
+        snippetLabel.cell?.truncatesLastVisibleLine = true
+        snippetLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        timeLabel.font = .systemFont(ofSize: 10)
-        timeLabel.textColor = .tertiaryLabelColor
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(timeLabel)
-
-        let sep = NSBox()
-        sep.boxType = .separator
-        sep.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(sep)
+        [unreadDot, avatar, nameLabel, timeLabel, snippetLabel].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        textField = nameLabel
 
         NSLayoutConstraint.activate([
-            avatarView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            avatarView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            avatarView.widthAnchor.constraint(equalToConstant: 32),
-            avatarView.heightAnchor.constraint(equalToConstant: 32),
+            unreadDot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            unreadDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            unreadDot.widthAnchor.constraint(equalToConstant: 8),
+            unreadDot.heightAnchor.constraint(equalToConstant: 8),
+
+            avatar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            avatar.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            nameLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 10),
+            nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -6),
 
-            timeLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            timeLabel.firstBaselineAnchor.constraint(equalTo: nameLabel.firstBaselineAnchor),
+            timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
 
-            snippetLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
-            snippetLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 10),
-            snippetLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-
-            sep.leadingAnchor.constraint(equalTo: leadingAnchor),
-            sep.trailingAnchor.constraint(equalTo: trailingAnchor),
-            sep.bottomAnchor.constraint(equalTo: bottomAnchor),
-            sep.heightAnchor.constraint(equalToConstant: 1)
+            snippetLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
+            snippetLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            snippetLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            snippetLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -6)
         ])
     }
 
+    required init?(coder: NSCoder) { fatalError() }
+
     func configure(with conv: Conversation) {
+        avatar.configure(name: conv.contactName, isNumberOnly: conv.contactName == conv.contactNumber)
         nameLabel.stringValue = conv.contactName
-        snippetLabel.stringValue = conv.lastMessage?.body ?? ""
-        timeLabel.stringValue = conv.lastMessage?.formattedTime ?? ""
+        snippetLabel.stringValue = (conv.lastMessage?.body ?? "").replacingOccurrences(of: "\n", with: " ")
+        timeLabel.stringValue = conv.lastMessage.map { ListTime.string($0.timestamp) } ?? ""
+        unreadDot.isHidden = conv.unreadCount == 0
     }
 }
 
-// MARK: - Message Bubble Cell
-
-private final class MessageBubbleCell: NSTableCellView {
-    private let bubbleView = NSView()
-    private let messageLabel = NSTextField(labelWithString: "")
-    private var leadingConstraint: NSLayoutConstraint?
-    private var trailingConstraint: NSLayoutConstraint?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        setupViews()
+private enum ListTime {
+    static func string(_ date: Date) -> String {
+        let cal = Calendar.current
+        let f = DateFormatter()
+        if cal.isDateInToday(date) { f.timeStyle = .short; f.dateStyle = .none; return f.string(from: date) }
+        if cal.isDateInYesterday(date) { return "Yesterday" }
+        if let days = cal.dateComponents([.day], from: date, to: Date()).day, days < 7 {
+            f.dateFormat = "EEEE"; return f.string(from: date)
+        }
+        f.dateStyle = .short; f.timeStyle = .none
+        return f.string(from: date)
     }
+}
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
+/// One chat bubble, pinned left (incoming, grey) or right (outgoing, blue).
+private final class BubbleRow: NSView {
+    init(message: Message, maxWidth: CGFloat) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
 
-    private func setupViews() {
-        bubbleView.wantsLayer = true
-        bubbleView.layer?.cornerRadius = 14
-        bubbleView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(bubbleView)
+        let bubble = NSView()
+        bubble.wantsLayer = true
+        bubble.layer?.cornerRadius = 17
+        bubble.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(bubble)
 
-        messageLabel.font = .systemFont(ofSize: 13)
-        messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.maximumNumberOfLines = 4
-        bubbleView.addSubview(messageLabel)
+        let label = NSTextField(wrappingLabelWithString: message.body)
+        label.font = .systemFont(ofSize: 14)
+        label.isSelectable = true
+        label.preferredMaxLayoutWidth = maxWidth - 24
+        label.translatesAutoresizingMaskIntoConstraints = false
+        bubble.addSubview(label)
 
-        leadingConstraint = bubbleView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16)
-        trailingConstraint = bubbleView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16)
+        let outgoing = !message.isIncoming
+        if outgoing {
+            bubble.layer?.backgroundColor = (message.deliveryStatus == .failed ? NSColor.systemRed : NSColor.droidAccent).cgColor
+            bubble.alphaValue = message.deliveryStatus == .pending ? 0.6 : 1
+            label.textColor = .white
+        } else {
+            bubble.layer?.backgroundColor = NSColor(name: nil) { a in
+                a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(srgbRed: 0.23, green: 0.23, blue: 0.24, alpha: 1)
+                    : NSColor(srgbRed: 0.91, green: 0.91, blue: 0.92, alpha: 1)
+            }.resolvedCGColor(in: self)
+            label.textColor = .labelColor
+        }
+        toolTip = Self.tip.string(from: message.timestamp)
 
         NSLayoutConstraint.activate([
-            bubbleView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            bubbleView.widthAnchor.constraint(lessThanOrEqualToConstant: 340),
-
-            messageLabel.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 8),
-            messageLabel.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -8),
-            messageLabel.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 12),
-            messageLabel.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -12)
+            bubble.topAnchor.constraint(equalTo: topAnchor),
+            bubble.bottomAnchor.constraint(equalTo: bottomAnchor),
+            bubble.widthAnchor.constraint(lessThanOrEqualToConstant: maxWidth),
+            outgoing ? bubble.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20)
+                     : bubble.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            outgoing ? bubble.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 60)
+                     : bubble.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -60),
+            label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 7),
+            label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -7),
+            label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -12)
         ])
     }
 
-    func configure(with msg: Message) {
-        messageLabel.stringValue = msg.body
+    required init?(coder: NSCoder) { fatalError() }
 
-        if !msg.isIncoming {
-            bubbleView.layer?.backgroundColor = NSColor.droidAccent.cgColor
-            messageLabel.textColor = .white
-            leadingConstraint?.isActive = false
-            trailingConstraint?.isActive = true
-        } else {
-            bubbleView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-            messageLabel.textColor = .labelColor
-            trailingConstraint?.isActive = false
-            leadingConstraint?.isActive = true
-        }
+    private static let tip: DateFormatter = {
+        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short; return f
+    }()
+}
+
+private extension NSColor {
+    func resolvedCGColor(in view: NSView) -> CGColor {
+        var c: CGColor = cgColor
+        view.effectiveAppearance.performAsCurrentDrawingAppearance { c = self.cgColor }
+        return c
     }
+}
+
+/// "Today 8:31 PM" between groups of messages.
+private final class DateSeparator: NSView {
+    init(date: Date) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        let label = NSTextField(labelWithString: Self.text(date))
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private static func text(_ date: Date) -> String {
+        let cal = Calendar.current
+        let time = DateFormatter(); time.timeStyle = .short; time.dateStyle = .none
+        if cal.isDateInToday(date) { return "Today \(time.string(from: date))" }
+        if cal.isDateInYesterday(date) { return "Yesterday \(time.string(from: date))" }
+        let f = DateFormatter(); f.dateFormat = "EEE, d MMM 'at' h:mm a"
+        return f.string(from: date)
+    }
+}
+
+/// "Sent" / "Not Delivered" under the last outgoing bubble.
+private final class StatusCaption: NSView {
+    init(text: String, failed: Bool) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 10, weight: .medium)
+        label.textColor = failed ? .systemRed : .tertiaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+/// Centered icon + text (+ optional button) for empty and error states of the list.
+private final class StatusOverlay: NSView {
+    var onButton: (() -> Void)?
+    private let icon = NSImageView()
+    private let spinner = NSProgressIndicator()
+    private let title = NSTextField(labelWithString: "")
+    private let detail = NSTextField(wrappingLabelWithString: "")
+    private let button = NSButton(title: "", target: nil, action: nil)
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        icon.symbolConfiguration = .init(pointSize: 28, weight: .light)
+        icon.contentTintColor = .tertiaryLabelColor
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.textColor = .secondaryLabelColor
+        title.alignment = .center
+        detail.font = .systemFont(ofSize: 12)
+        detail.textColor = .tertiaryLabelColor
+        detail.alignment = .center
+        button.bezelStyle = .rounded
+        button.target = self
+        button.action = #selector(tapped)
+
+        let stack = NSStackView(views: [icon, spinner, title, detail, button])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            detail.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(symbol: String?, title t: String, detail d: String?, button b: String?, spinning: Bool = false) {
+        isHidden = false
+        icon.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+        icon.isHidden = symbol == nil
+        spinner.isHidden = !spinning
+        spinning ? spinner.startAnimation(nil) : spinner.stopAnimation(nil)
+        title.stringValue = t
+        detail.stringValue = d ?? ""
+        detail.isHidden = d == nil
+        button.title = b ?? ""
+        button.isHidden = b == nil
+    }
+
+    @objc private func tapped() { onButton?() }
 }

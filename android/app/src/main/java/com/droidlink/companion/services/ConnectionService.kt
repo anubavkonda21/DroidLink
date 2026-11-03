@@ -117,6 +117,7 @@ class ConnectionService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        SmsBridge.unwatch(this)
         unregisterNsdService()
         stopControlServer()
         heartbeatJob?.cancel()
@@ -293,6 +294,15 @@ class ConnectionService : Service() {
             "key_event" -> p?.let {
                 InputService.key(it.int("keyCode") ?: return, it.int("action") ?: return, it.str("character"))
             }
+            "sms_list" -> pushSmsList()
+            "sms_send" -> {
+                val to = p?.str("recipientNumber") ?: return
+                val body = p.str("messageBody") ?: return
+                serviceScope.launch {
+                    // on success the SMS store change pushes a fresh list; on failure push now so the Mac stops waiting
+                    if (!SmsBridge.send(this@ConnectionService, to, body)) SmsBridge.pushList(this@ConnectionService)
+                }
+            }
             "find_phone" -> ringPhone()
             "stop_find_phone" -> stopRinging()
             "mac_status" -> _macStatus.value = p
@@ -377,6 +387,22 @@ class ConnectionService : Service() {
                 runCatching { MacWire.writeFrame(writer, body) }
             }
         }
+    }
+
+    /** Sends a payload the Mac knows by type name only (no ProtocolMessage class). */
+    fun sendRaw(type: String, payload: JsonObject?) {
+        val body = MacWire.encodeRaw(type, payload)
+        serviceScope.launch(Dispatchers.IO) {
+            for (writer in activeWriters) {
+                runCatching { MacWire.writeFrame(writer, body) }
+            }
+        }
+    }
+
+    /** Reads SMS off the main thread and sends the list to the Mac, if one is connected. */
+    fun pushSmsList() {
+        if (activeWriters.isEmpty()) return
+        serviceScope.launch { SmsBridge.pushList(this@ConnectionService) }
     }
 
     fun disconnectCurrentClients() {

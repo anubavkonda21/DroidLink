@@ -46,6 +46,15 @@ object PermissionHelper {
     )
 
     /**
+     * SMS permissions for the Mac's Messages page (read conversations, send replies, see new texts).
+     */
+    val SMS_PERMISSIONS = arrayOf(
+        Manifest.permission.READ_SMS,
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.RECEIVE_SMS
+    )
+
+    /**
      * Storage & Media permissions for two-way file sharing.
      */
     val STORAGE_PERMISSIONS: Array<String> = buildList {
@@ -68,7 +77,7 @@ object PermissionHelper {
     /**
      * Complete aggregate list of standard dangerous runtime permissions needed across all features.
      */
-    val ALL_APP_PERMISSIONS: Array<String> = (CORE_PERMISSIONS + CALL_BRIDGE_PERMISSIONS + STORAGE_PERMISSIONS + AUDIO_PERMISSIONS).distinct().toTypedArray()
+    val ALL_APP_PERMISSIONS: Array<String> = (CORE_PERMISSIONS + CALL_BRIDGE_PERMISSIONS + SMS_PERMISSIONS + STORAGE_PERMISSIONS + AUDIO_PERMISSIONS).distinct().toTypedArray()
 
     /**
      * Checks if a single permission is granted.
