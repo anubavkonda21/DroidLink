@@ -54,6 +54,9 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -226,7 +229,12 @@ fun HomeScreen(
 
                 if (connectionState.isConnected) {
                     Text(
-                        text = "RTT Latency: ${latencyMs}ms • Wi-Fi LAN / USB Direct",
+                        // a loopback host means the link runs through the adb tunnel (USB)
+                        text = listOfNotNull(
+                            (connectionState as? ConnectionState.Connected)?.hostAddress
+                                ?.let { if (it.startsWith("127.") || it == "localhost") "USB" else "Wi-Fi • $it" },
+                            latencyMs.takeIf { it > 0 }?.let { "$it ms" }
+                        ).joinToString(" • "),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -255,11 +263,12 @@ fun HomeScreen(
                                 activityLogs.add(0, ActivityLogItem(title = "Disconnected", description = "Manual disconnect requested"))
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Default.LinkOff, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Disconnect")
+                            Icon(Icons.Default.LinkOff, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Disconnect", maxLines = 1, softWrap = false)
                         }
 
                         // Mirroring Toggle Button
@@ -282,11 +291,12 @@ fun HomeScreen(
                                     onRequestScreenCapture()
                                     activityLogs.add(0, ActivityLogItem(title = "Mirror Requested", description = "Starting projection flow"))
                                 },
+                                contentPadding = PaddingValues(horizontal = 12.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Default.Cast, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Mirror Screen")
+                                Icon(Icons.Default.Cast, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Mirror Screen", maxLines = 1, softWrap = false)
                             }
                         }
                     } else {
@@ -327,11 +337,11 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        FlowRow(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            AssistChip(
+            QuickActionTile(
                 onClick = {
                     // The app is in the foreground here, so Android lets it read the clipboard
                     val clip = (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
@@ -344,22 +354,22 @@ fun HomeScreen(
                         Toast.makeText(context, "Clipboard is empty", Toast.LENGTH_SHORT).show()
                     }
                 },
-                label = { Text("Send Clipboard") },
-                leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                label = "Send Clipboard",
+                icon = Icons.Default.ContentPaste
             )
 
-            AssistChip(
+            QuickActionTile(
                 onClick = {
                     filePickerLauncher.launch(arrayOf("*/*"))
                 },
-                label = { Text("Send File") },
-                leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                label = "Send File",
+                icon = Icons.Default.UploadFile
             )
 
-            AssistChip(
+            QuickActionTile(
                 onClick = onRequestPermissions,
-                label = { Text("Permissions") },
-                leadingIcon = { Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                label = "Permissions",
+                icon = Icons.Default.Security
             )
         }
 
@@ -477,5 +487,24 @@ fun HomeScreen(
                 }
             }
         )
+    }
+}
+
+/** Equal-width tile: icon above its label. */
+@Composable
+private fun RowScope.QuickActionTile(
+    onClick: () -> Unit,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
+    OutlinedCard(onClick = onClick, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(6.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
     }
 }

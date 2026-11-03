@@ -188,8 +188,9 @@ public final class DashboardViewController: NSViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         stack.addArrangedSubview(spacer)
 
-        let refreshBtn = NSButton(title: "Refresh Telemetry", target: self, action: #selector(refreshClicked(_:)))
+        let refreshBtn = NSButton(image: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")!, target: self, action: #selector(refreshClicked(_:)))
         refreshBtn.bezelStyle = .rounded
+        refreshBtn.toolTip = "Refresh phone info"
         stack.addArrangedSubview(refreshBtn)
 
         return card
@@ -218,25 +219,30 @@ public final class DashboardViewController: NSViewController {
 
         let btnRow = NSStackView()
         btnRow.orientation = .horizontal
+        btnRow.distribution = .fillEqually
         btnRow.spacing = 12
 
-        let findBtn = NSButton(title: "Find My Phone", target: self, action: #selector(findPhoneClicked(_:)))
-        findBtn.image = NSImage(systemSymbolName: "speaker.wave.3.fill", accessibilityDescription: "Find Phone")
-        btnRow.addArrangedSubview(findBtn)
-
-        let dndBtn = NSButton(title: "Do Not Disturb", target: self, action: #selector(dndClicked(_:)))
-        dndBtn.image = NSImage(systemSymbolName: "moon.fill", accessibilityDescription: "Do Not Disturb")
-        btnRow.addArrangedSubview(dndBtn)
-
-        // Icon + text, with a tooltip, so each action is self-explanatory
-        let tips = ["Ring the phone loudly for 15 seconds", "Choose the phone's Do Not Disturb mode"]
-        for (button, tip) in zip(btnRow.arrangedSubviews.compactMap { $0 as? NSButton }, tips) {
-            button.imagePosition = .imageLeading
-            button.bezelStyle = .rounded
+        // (title, SF symbol, tooltip, action): equal-width tiles, icon above text
+        let actions: [(String, String, String, Selector)] = [
+            ("Mirror", "iphone.gen3", "Show and control the phone screen", #selector(mirrorClicked(_:))),
+            ("Find My Phone", "speaker.wave.3.fill", "Ring the phone loudly for 15 seconds", #selector(findPhoneClicked(_:))),
+            ("Do Not Disturb", "moon.fill", "Choose the phone's Do Not Disturb mode", #selector(dndClicked(_:))),
+            ("Send File", "square.and.arrow.up", "Send files from this Mac to the phone", #selector(sendFileClicked(_:)))
+        ]
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: 20, weight: .regular)
+        for (title, symbol, tip, action) in actions {
+            let button = NSButton(title: title, target: self, action: action)
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(symbolConfig)
+            button.imagePosition = .imageAbove
+            button.bezelStyle = .regularSquare
+            button.contentTintColor = .controlAccentColor
             button.toolTip = tip
+            button.heightAnchor.constraint(equalToConstant: 64).isActive = true
+            btnRow.addArrangedSubview(button)
         }
 
         stack.addArrangedSubview(btnRow)
+        btnRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         return card
     }
 
@@ -262,10 +268,10 @@ public final class DashboardViewController: NSViewController {
         let icon = NSImageView(image: NSImage(systemSymbolName: "battery.100.bolt", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemGreen
         titleRow.addArrangedSubview(icon)
-        titleRow.addArrangedSubview(NSTextField(labelWithString: "Battery Status"))
+        titleRow.addArrangedSubview(NSTextField(labelWithString: "Battery"))
         stack.addArrangedSubview(titleRow)
 
-        batteryPercentLabel = NSTextField(labelWithString: "85%")
+        batteryPercentLabel = NSTextField(labelWithString: "—")
         batteryPercentLabel.font = .systemFont(ofSize: 24, weight: .bold)
         stack.addArrangedSubview(batteryPercentLabel)
 
@@ -273,12 +279,11 @@ public final class DashboardViewController: NSViewController {
         batteryProgress.isIndeterminate = false
         batteryProgress.minValue = 0
         batteryProgress.maxValue = 100
-        batteryProgress.doubleValue = 85
-        batteryProgress.translatesAutoresizingMaskIntoConstraints = false
+                batteryProgress.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(batteryProgress)
         batteryProgress.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        batteryStatusLabel = NSTextField(labelWithString: "Charging • Fast Wireless")
+        batteryStatusLabel = NSTextField(labelWithString: "—")
         batteryStatusLabel.font = .systemFont(ofSize: 11)
         batteryStatusLabel.textColor = .secondaryLabelColor
         stack.addArrangedSubview(batteryStatusLabel)
@@ -308,10 +313,10 @@ public final class DashboardViewController: NSViewController {
         let icon = NSImageView(image: NSImage(systemSymbolName: "internaldrive.fill", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemOrange
         titleRow.addArrangedSubview(icon)
-        titleRow.addArrangedSubview(NSTextField(labelWithString: "Device Storage"))
+        titleRow.addArrangedSubview(NSTextField(labelWithString: "Storage"))
         stack.addArrangedSubview(titleRow)
 
-        storagePercentLabel = NSTextField(labelWithString: "64 GB Free")
+        storagePercentLabel = NSTextField(labelWithString: "—")
         storagePercentLabel.font = .systemFont(ofSize: 24, weight: .bold)
         stack.addArrangedSubview(storagePercentLabel)
 
@@ -319,12 +324,11 @@ public final class DashboardViewController: NSViewController {
         storageProgress.isIndeterminate = false
         storageProgress.minValue = 0
         storageProgress.maxValue = 100
-        storageProgress.doubleValue = 50
-        storageProgress.translatesAutoresizingMaskIntoConstraints = false
+                storageProgress.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(storageProgress)
         storageProgress.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        storageDetailsLabel = NSTextField(labelWithString: "64 GB used of 128 GB")
+        storageDetailsLabel = NSTextField(labelWithString: "—")
         storageDetailsLabel.font = .systemFont(ofSize: 11)
         storageDetailsLabel.textColor = .secondaryLabelColor
         stack.addArrangedSubview(storageDetailsLabel)
@@ -354,14 +358,14 @@ public final class DashboardViewController: NSViewController {
         let icon = NSImageView(image: NSImage(systemSymbolName: "display", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemPurple
         titleRow.addArrangedSubview(icon)
-        titleRow.addArrangedSubview(NSTextField(labelWithString: "Display Specs"))
+        titleRow.addArrangedSubview(NSTextField(labelWithString: "Screen"))
         stack.addArrangedSubview(titleRow)
 
-        screenResolutionLabel = NSTextField(labelWithString: "1080 × 2400")
+        screenResolutionLabel = NSTextField(labelWithString: "—")
         screenResolutionLabel.font = .systemFont(ofSize: 22, weight: .bold)
         stack.addArrangedSubview(screenResolutionLabel)
 
-        screenDpiLabel = NSTextField(labelWithString: "420 DPI • 60 Hz Stream Target")
+        screenDpiLabel = NSTextField(labelWithString: "—")
         screenDpiLabel.font = .systemFont(ofSize: 11)
         screenDpiLabel.textColor = .secondaryLabelColor
         stack.addArrangedSubview(screenDpiLabel)
@@ -391,14 +395,14 @@ public final class DashboardViewController: NSViewController {
         let icon = NSImageView(image: NSImage(systemSymbolName: "wifi", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemTeal
         titleRow.addArrangedSubview(icon)
-        titleRow.addArrangedSubview(NSTextField(labelWithString: "Network & Stream"))
+        titleRow.addArrangedSubview(NSTextField(labelWithString: "Connection"))
         stack.addArrangedSubview(titleRow)
 
-        latencyLabel = NSTextField(labelWithString: "\(connectionManager.latencyMs) ms Latency")
+        latencyLabel = NSTextField(labelWithString: "—")
         latencyLabel.font = .systemFont(ofSize: 22, weight: .bold)
         stack.addArrangedSubview(latencyLabel)
 
-        networkTypeLabel = NSTextField(labelWithString: "Direct USB ADB Bridge")
+        networkTypeLabel = NSTextField(labelWithString: "—")
         networkTypeLabel.font = .systemFont(ofSize: 11)
         networkTypeLabel.textColor = .secondaryLabelColor
         stack.addArrangedSubview(networkTypeLabel)
@@ -433,7 +437,8 @@ public final class DashboardViewController: NSViewController {
             screenResolutionLabel.stringValue = "—"
             screenDpiLabel.stringValue = "—"
 
-            latencyLabel.stringValue = "— ms"
+            latencyLabel.stringValue = "—"
+            batteryPercentLabel.textColor = .labelColor
             networkTypeLabel.stringValue = "Not Connected"
             return
         }
@@ -444,7 +449,10 @@ public final class DashboardViewController: NSViewController {
 
         batteryPercentLabel.stringValue = "\(device.batteryLevel)%"
         batteryProgress.doubleValue = Double(device.batteryLevel)
-        batteryStatusLabel.stringValue = device.isCharging ? "Charging" : "Discharging"
+        batteryStatusLabel.stringValue = device.isCharging ? "Charging" : "On battery"
+        // NSProgressIndicator ignores tint, so color the percentage instead
+        batteryPercentLabel.textColor = device.isCharging || device.batteryLevel > 30 ? .systemGreen
+            : device.batteryLevel >= 15 ? .systemOrange : .systemRed
 
         let totalGB = max(1, device.storageTotal / 1_000_000_000)
         let freeGB = device.storageFree / 1_000_000_000
@@ -455,10 +463,11 @@ public final class DashboardViewController: NSViewController {
         storageDetailsLabel.stringValue = "\(usedGB) GB used of \(totalGB) GB"
 
         screenResolutionLabel.stringValue = "\(device.screenWidth) × \(device.screenHeight)"
-        screenDpiLabel.stringValue = "\(device.screenDpi) DPI • 60 Hz Stream Target"
+        screenDpiLabel.stringValue = "\(device.screenDpi) dpi"
 
-        latencyLabel.stringValue = "\(connectionManager.latencyMs) ms Latency"
-        networkTypeLabel.stringValue = device.connectionType == .usb ? "Direct USB ADB Bridge" : (device.ipAddress ?? "Wi-Fi (Active)")
+        latencyLabel.stringValue = device.connectionType == .usb ? "USB" : "Wi-Fi"
+        networkTypeLabel.stringValue = [device.ipAddress, connectionManager.latencyMs > 0 ? "\(connectionManager.latencyMs) ms" : nil]
+            .compactMap { $0 }.joined(separator: " • ")
     }
 
     // MARK: - Actions
@@ -470,6 +479,20 @@ public final class DashboardViewController: NSViewController {
                     connectionManager.currentDeviceInfo = updated
                 }
             }
+        }
+    }
+
+    @objc private func mirrorClicked(_ sender: NSButton) {
+        (parent as? MainSplitViewController)?.launchScrcpyMirror()
+    }
+
+    @objc private func sendFileClicked(_ sender: NSButton) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK {
+            connectionManager.fileTransferService.sendFiles(urls: panel.urls)
         }
     }
 

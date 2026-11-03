@@ -200,7 +200,7 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
         launchScrcpyMirror()
     }
 
-    private func launchScrcpyMirror() {
+    func launchScrcpyMirror() {
         ScrcpyToolbar.shared.start() // nav bar follows the scrcpy window once it appears
         if let pid = ScrcpyToolbar.scrcpyPID() {
             NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateAllWindows])
