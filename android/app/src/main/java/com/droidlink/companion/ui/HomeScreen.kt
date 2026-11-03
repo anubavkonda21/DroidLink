@@ -45,7 +45,6 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
@@ -54,6 +53,8 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
@@ -122,9 +123,7 @@ fun HomeScreen(
     }
 
     // File picker launcher for Quick Action: Send File
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
+    val sendToMac: (Uri?) -> Unit = { uri ->
         if (uri != null) {
             val intent = Intent(context, FileServerService::class.java).apply {
                 action = Constants.ACTION_SEND_FILE
@@ -138,6 +137,8 @@ fun HomeScreen(
             Toast.makeText(context, "Streaming file to Mac…", Toast.LENGTH_SHORT).show()
         }
     }
+    val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument(), sendToMac)
+    val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia(), sendToMac)
 
     Column(
         modifier = Modifier
@@ -367,9 +368,11 @@ fun HomeScreen(
             )
 
             QuickActionTile(
-                onClick = onRequestPermissions,
-                label = "Permissions",
-                icon = Icons.Default.Security
+                onClick = {
+                    photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                },
+                label = "Send Photo",
+                icon = Icons.Default.Image
             )
         }
 

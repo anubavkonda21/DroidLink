@@ -79,21 +79,17 @@ public final class DashboardViewController: NSViewController {
         mainStack.addArrangedSubview(metricsStack)
         metricsStack.widthAnchor.constraint(equalTo: mainStack.widthAnchor).isActive = true
 
-        let row1 = NSStackView()
-        row1.orientation = .horizontal
-        row1.distribution = .fillEqually
-        row1.spacing = 16
-        row1.addArrangedSubview(createBatteryCard())
-        row1.addArrangedSubview(createStorageCard())
-        metricsStack.addArrangedSubview(row1)
-
-        let row2 = NSStackView()
-        row2.orientation = .horizontal
-        row2.distribution = .fillEqually
-        row2.spacing = 16
-        row2.addArrangedSubview(createDisplayCard())
-        row2.addArrangedSubview(createNetworkCard())
-        metricsStack.addArrangedSubview(row2)
+        // 2x2 grid: rows span the full width, both cards in a row share width and height
+        for (left, right) in [(createBatteryCard(), createStorageCard()), (createDisplayCard(), createNetworkCard())] {
+            let row = NSStackView(views: [left, right])
+            row.orientation = .horizontal
+            row.distribution = .fillEqually
+            row.alignment = .top
+            row.spacing = 16
+            metricsStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: metricsStack.widthAnchor).isActive = true
+            right.heightAnchor.constraint(equalTo: left.heightAnchor).isActive = true
+        }
 
         // Notification registration
         NotificationCenter.default.addObserver(
@@ -235,11 +231,17 @@ public final class DashboardViewController: NSViewController {
             let button = NSButton(title: title, target: self, action: action)
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(symbolConfig)
             button.imagePosition = .imageAbove
+            button.imageHugsTitle = true // centre icon + label together instead of pinning the icon to the top
             button.bezelStyle = .regularSquare
+            button.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             button.contentTintColor = .controlAccentColor
             button.toolTip = tip
             button.heightAnchor.constraint(equalToConstant: 64).isActive = true
             btnRow.addArrangedSubview(button)
+            if let first = btnRow.arrangedSubviews.first, first !== button {
+                button.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
+            }
         }
 
         stack.addArrangedSubview(btnRow)
