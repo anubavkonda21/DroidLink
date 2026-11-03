@@ -13,6 +13,7 @@ import AppKit
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     public var window: NSWindow?
     private var statusItem: NSStatusItem?
+    private var webcamProcess: Process?
 
     private var connectionManager: ConnectionManager { ConnectionManager.shared }
 
@@ -50,6 +51,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        webcamProcess?.terminate()
         connectionManager.disconnect()
         ADBService.shared.stopPeriodicDiscovery()
     }
@@ -216,6 +218,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
+        let camItem = NSMenuItem(title: "Use Phone as Webcam", action: #selector(toggleWebcam(_:)), keyEquivalent: "")
+        camItem.state = webcamProcess?.isRunning == true ? .on : .off
+        menu.addItem(camItem)
+
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Setup Wizard…", action: #selector(openWizard(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Preferences…", action: #selector(openPreferences(_:)), keyEquivalent: ",")
         menu.addItem(.separator())
@@ -231,6 +238,49 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Menu Actions
+
+    /// Phone camera -> OBS Virtual Camera, via the same kind of launcher script as mirroring.
+    @objc private func toggleWebcam(_ sender: Any?) {
+        if let p = webcamProcess, p.isRunning {
+            p.terminate()
+            return
+        }
+        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("droidlink-webcam.log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        p.arguments = ["/Users/anubavkonda/Downloads/Screen mirror/Phone Webcam.command"]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        p.environment = env
+        p.standardInput = FileHandle.nullDevice
+        if let log = try? FileHandle(forWritingTo: logURL) {
+            p.standardOutput = log
+            p.standardError = log
+        }
+        p.terminationHandler = { [weak self] proc in
+            let failed = proc.terminationReason == .exit && proc.terminationStatus != 0
+            let tail = ((try? String(contentsOf: logURL, encoding: .utf8)) ?? "")
+                .split(separator: "\n").suffix(6).joined(separator: "\n")
+            DispatchQueue.main.async {
+                self?.webcamProcess = nil
+                self?.updateStatusBarMenu()
+                guard failed else { return }
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "Couldn't start the phone webcam"
+                alert.informativeText = tail.isEmpty ? "The webcam script exited with code \(proc.terminationStatus)." : tail
+                alert.runModal()
+            }
+        }
+        do {
+            try p.run()
+            webcamProcess = p
+            updateStatusBarMenu()
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
 
     @objc private func openMainWindow(_ sender: Any?) {
         if window == nil {
