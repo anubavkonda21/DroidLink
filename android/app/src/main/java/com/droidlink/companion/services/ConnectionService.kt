@@ -99,6 +99,7 @@ class ConnectionService : Service() {
         Log.d(TAG, "onStartCommand action: $action")
 
         when (action) {
+            ACTION_STOP_RINGING -> stopRinging()
             Constants.ACTION_DISCONNECT -> {
                 disconnectCurrentClients()
             }
@@ -293,6 +294,7 @@ class ConnectionService : Service() {
                 InputService.key(it.int("keyCode") ?: return, it.int("action") ?: return, it.str("character"))
             }
             "find_phone" -> ringPhone()
+            "stop_find_phone" -> stopRinging()
             "mac_status" -> _macStatus.value = p
             "disconnect" -> disconnectCurrentClients()
             else -> Log.d(TAG, "Unhandled message type: ${msg.type}")
@@ -300,7 +302,10 @@ class ConnectionService : Service() {
     }
 
     /** Plays the alarm sound for 15 seconds so the phone can be found, even on silent. */
+    private var ringing: android.media.Ringtone? = null
+
     private fun ringPhone() {
+        stopRinging()
         val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
             ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
         val ringtone = android.media.RingtoneManager.getRingtone(this, uri) ?: return
@@ -308,7 +313,36 @@ class ConnectionService : Service() {
             .setUsage(android.media.AudioAttributes.USAGE_ALARM)
             .build()
         ringtone.play()
-        serviceScope.launch { delay(15_000); ringtone.stop() }
+        ringing = ringtone
+        // "Found it" notification with a Stop button, so it can be silenced on the phone too
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notificationManager.createNotificationChannel(
+                NotificationChannel(CHANNEL_FIND_PHONE, "Find My Phone", NotificationManager.IMPORTANCE_HIGH)
+            )
+        }
+        val stop = PendingIntent.getService(
+            this, 3, Intent(this, ConnectionService::class.java).setAction(ACTION_STOP_RINGING),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        notificationManager.notify(
+            NOTIFICATION_ID_FIND_PHONE,
+            NotificationCompat.Builder(this, CHANNEL_FIND_PHONE)
+                .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
+                .setContentTitle("Your Mac is looking for this phone")
+                .setContentText("Tap Stop to silence it")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(stop)
+                .setDeleteIntent(stop)
+                .addAction(0, "Stop", stop)
+                .build()
+        )
+        serviceScope.launch { delay(15_000); if (ringing === ringtone) stopRinging() }
+    }
+
+    private fun stopRinging() {
+        ringing?.stop()
+        ringing = null
+        notificationManager.cancel(NOTIFICATION_ID_FIND_PHONE)
     }
 
     private fun JsonObject.str(key: String) = this[key]?.jsonPrimitive?.content
@@ -395,6 +429,9 @@ class ConnectionService : Service() {
 
     companion object {
         private const val TAG = "ConnectionService"
+        private const val ACTION_STOP_RINGING = "com.droidlink.companion.STOP_RINGING"
+        private const val CHANNEL_FIND_PHONE = "droidlink_channel_find_phone"
+        private const val NOTIFICATION_ID_FIND_PHONE = 1005
 
         @Volatile
         var instance: ConnectionService? = null

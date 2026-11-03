@@ -27,6 +27,7 @@ public enum MessageType: String, Codable {
     case setScreenPower = "set_screen_power"
     case rotateDevice = "rotate_device"
     case findPhone = "find_phone"
+    case stopFindPhone = "stop_find_phone"
     case volumeControl = "volume_control"
 
     // Ecosystem Sync

@@ -13,6 +13,7 @@ import AppKit
 public final class DashboardViewController: NSViewController {
     private var connectionManager: ConnectionManager { ConnectionManager.shared }
     private weak var webcamButton: NSButton?
+    private var ringStopTimer: Timer? // non-nil while the phone is ringing
 
     private var deviceNameLabel: NSTextField!
     private var deviceSubLabel: NSTextField!
@@ -538,8 +539,24 @@ public final class DashboardViewController: NSViewController {
         button.contentTintColor = on ? .systemRed : .droidAccent
     }
 
+    /// Rings the phone; while it rings (15 s) the tile turns into a red "Stop Ringing" button.
     @objc private func findPhoneClicked(_ sender: NSButton) {
-        connectionManager.sendControlMessage(type: .findPhone, payload: [String: String]())
+        let ringing = ringStopTimer != nil
+        connectionManager.sendControlMessage(type: ringing ? .stopFindPhone : .findPhone, payload: [String: String]())
+        ringStopTimer?.invalidate()
+        ringStopTimer = ringing ? nil : Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { [weak self, weak sender] _ in
+            self?.ringStopTimer = nil
+            if let sender { self?.setFindTile(sender, ringing: false) }
+        }
+        setFindTile(sender, ringing: !ringing)
+    }
+
+    private func setFindTile(_ button: NSButton, ringing: Bool) {
+        button.title = ringing ? "Stop Ringing" : "Find My Phone"
+        button.image = NSImage(systemSymbolName: ringing ? "speaker.slash.fill" : "speaker.wave.3.fill",
+                               accessibilityDescription: button.title)
+        button.contentTintColor = ringing ? .systemRed : .droidAccent
+        button.needsDisplay = true
     }
 
     /// (title, `cmd notification set_dnd` argument, matching `zen_mode` value)
