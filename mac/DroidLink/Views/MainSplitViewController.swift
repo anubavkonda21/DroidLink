@@ -439,6 +439,10 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
         return NavigationSection.allCases.count
     }
 
+    public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        SidebarRowView()
+    }
+
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < NavigationSection.allCases.count else { return nil }
         let section = NavigationSection.allCases[row]
@@ -460,6 +464,7 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
         }
 
         cell.configure(section: section, badgeCount: badgeCount)
+        cell.setSelected(tableView.selectedRow == row)
         return cell
     }
 
@@ -520,9 +525,14 @@ private final class SidebarItemCell: NSTableCellView {
         ])
     }
 
+    func setSelected(_ selected: Bool) {
+        iconView.contentTintColor = selected ? .droidAccent : .secondaryLabelColor
+        titleLabel.textColor = selected ? .droidAccent : .labelColor
+        titleLabel.font = .systemFont(ofSize: 13, weight: selected ? .semibold : .medium)
+    }
+
     func configure(section: NavigationSection, badgeCount: Int) {
         iconView.image = NSImage(systemSymbolName: section.iconName, accessibilityDescription: section.title)
-        iconView.contentTintColor = .secondaryLabelColor
         titleLabel.stringValue = section.title
 
         if badgeCount > 0 {
@@ -532,4 +542,25 @@ private final class SidebarItemCell: NSTableCellView {
             badgeLabel.isHidden = true
         }
     }
+}
+
+/// Sidebar row: the selected item gets a blue-tinted pill with an accent bar on the left.
+private final class SidebarRowView: NSTableRowView {
+    override var isSelected: Bool {
+        didSet {
+            (subviews.first as? SidebarItemCell)?.setSelected(isSelected)
+            needsDisplay = true
+        }
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        let pill = bounds.insetBy(dx: 8, dy: 3)
+        NSColor.droidAccent.withAlphaComponent(0.16).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
+        NSColor.droidAccent.setFill()
+        NSBezierPath(roundedRect: NSRect(x: pill.minX, y: pill.midY - 9, width: 3, height: 18), xRadius: 1.5, yRadius: 1.5).fill()
+    }
+
+    // keep the same look when the window isn't focused
+    override var isEmphasized: Bool { get { false } set {} }
 }
