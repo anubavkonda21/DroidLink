@@ -336,14 +336,22 @@ fun HomeScreen(
 
                         FilledTonalButton(
                             onClick = {
-                                Toast.makeText(context, "Scanning QR Code from Mac app…", Toast.LENGTH_SHORT).show()
-                                activityLogs.add(0, ActivityLogItem(title = "QR Scanner", description = "Opened pairing camera"))
+                                // Pairing uses Android's own scanner: Wireless debugging › Pair device with QR code.
+                                val devOptions = Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                try {
+                                    context.startActivity(devOptions)
+                                    Toast.makeText(context, "Open Wireless debugging, then tap \"Pair device with QR code\" and scan the code on your Mac.", Toast.LENGTH_LONG).show()
+                                } catch (e: android.content.ActivityNotFoundException) {
+                                    Toast.makeText(context, "Turn on Developer options first: Settings › About phone › tap Build number 7 times.", Toast.LENGTH_LONG).show()
+                                }
+                                activityLogs.add(0, ActivityLogItem(title = "Pair with Mac", description = "Opened Wireless debugging settings"))
                             },
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.QrCodeScanner, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Scan QR")
+                            Text("Pair with QR")
                         }
                     }
                 }
