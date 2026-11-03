@@ -31,6 +31,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Locate ADB and start discovery
         ADBService.shared.locateADB()
+        DevicePairing.shared.startConnectBrowser()  // reconnects remembered phones over Wi-Fi
 
         // Register power events
         registerSleepWakeNotifications()
@@ -48,6 +49,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             name: ConnectionManager.didChangeDeviceInfoNotification,
             object: nil
         )
+        for name in [ADBService.didUpdateDevicesNotification, DevicePairing.didChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(connectionStateChanged(_:)), name: name, object: nil)
+        }
 
         updateStatusBarMenu()
     }
@@ -220,6 +224,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
+        menu.addItem(devicesMenuItem())
+        menu.addItem(withTitle: "Add Phone with QR Code…", action: #selector(addDevice(_:)), keyEquivalent: "")
+
+        menu.addItem(.separator())
         let camItem = NSMenuItem(title: "Use Phone as Webcam", action: #selector(toggleWebcam(_:)), keyEquivalent: "")
         camItem.state = webcamProcess?.isRunning == true ? .on : .off
         menu.addItem(camItem)
@@ -318,6 +326,74 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.alertStyle = .informational
             alert.runModal()
         }
+    }
+
+    // MARK: - Devices
+
+    /// "Phones" submenu: every phone adb sees (tick = chosen one) and remembered phones that are offline.
+    private func devicesMenuItem() -> NSMenuItem {
+        let pairing = DevicePairing.shared
+        let sub = NSMenu()
+        let online = connectionManager.adbService.devices.filter { $0.state == .device }
+        let selected = pairing.selectedSerial ?? connectionManager.adbService.selectedDevice?.serial
+        for d in online {
+            let name = pairing.rememberedDevice(forAdbSerial: d.serial)?.name ?? d.model?.replacingOccurrences(of: "_", with: " ") ?? d.serial
+            let item = NSMenuItem(title: "\(name) (\(d.isWireless ? "Wi-Fi" : "USB"))", action: #selector(pickDevice(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = d.serial
+            item.state = d.serial == selected ? .on : .off
+            sub.addItem(item)
+        }
+        let offline = pairing.remembered.filter { r in !online.contains { pairing.rememberedDevice(forAdbSerial: $0.serial) == r } }
+        if !offline.isEmpty {
+            if !online.isEmpty { sub.addItem(.separator()) }
+            for r in offline {
+                let item = NSMenuItem(title: "\(r.name) (offline)", action: nil, keyEquivalent: "")
+                let forget = NSMenu()
+                let f = NSMenuItem(title: "Forget This Phone", action: #selector(forgetDevice(_:)), keyEquivalent: "")
+                f.target = self
+                f.representedObject = r.serial
+                forget.addItem(f)
+                item.submenu = forget
+                sub.addItem(item)
+            }
+        }
+        if sub.items.isEmpty {
+            let none = NSMenuItem(title: "No phones yet", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            sub.addItem(none)
+        }
+        let item = NSMenuItem(title: "Phones", action: nil, keyEquivalent: "")
+        item.submenu = sub
+        return item
+    }
+
+    @objc private func addDevice(_ sender: Any?) {
+        AddDeviceWindowController.shared.show()
+    }
+
+    @objc private func pickDevice(_ sender: NSMenuItem) {
+        guard let serial = sender.representedObject as? String else { return }
+        selectDevice(serial: serial)
+    }
+
+    @objc private func forgetDevice(_ sender: NSMenuItem) {
+        guard let serial = sender.representedObject as? String,
+              let r = DevicePairing.shared.remembered.first(where: { $0.serial == serial }) else { return }
+        DevicePairing.shared.forget(r)
+    }
+
+    /// Makes `serial` the phone everything talks to (mirror, webcam, files, control link) and connects to it.
+    func selectDevice(serial: String) {
+        let adb = connectionManager.adbService
+        DevicePairing.shared.selectedSerial = serial
+        adb.selectedDevice = adb.devices.first { $0.serial == serial } ?? ADBDevice(serial: serial)
+        let name = DevicePairing.shared.rememberedDevice(forAdbSerial: serial)?.name ?? adb.selectedDevice?.model ?? serial
+        connectionManager.disconnect()
+        connectionManager.connect(to: DiscoveredDevice(id: serial, name: name, model: name,
+                                                       transport: serial.contains(":") ? .wirelessAdb : .usb,
+                                                       adbSerial: serial))
+        updateStatusBarMenu()
     }
 
     @objc private func disconnectDevice(_ sender: Any?) {

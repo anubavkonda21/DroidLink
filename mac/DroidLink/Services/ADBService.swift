@@ -158,10 +158,13 @@ public final class ADBService: @unchecked Sendable {
                     self.devices = parsedDevices
                     self.isScanning = false
 
-                    if let selected = self.selectedDevice, !parsedDevices.contains(where: { $0.serial == selected.serial }) {
-                        self.selectedDevice = parsedDevices.first
-                    } else if self.selectedDevice == nil {
-                        self.selectedDevice = parsedDevices.first
+                    // Keep the chosen phone; otherwise fall back to the saved choice, then Wi-Fi, then anything.
+                    if self.selectedDevice.map({ s in !parsedDevices.contains { $0.serial == s.serial } }) ?? true {
+                        let ready = parsedDevices.filter { $0.state == .device }
+                        let saved = DevicePairing.shared.selectedSerial
+                        let savedIP = saved.flatMap { $0.contains(":") ? String($0.split(separator: ":")[0]) + ":" : nil }
+                        self.selectedDevice = ready.first { $0.serial == saved } ?? ready.first { savedIP != nil && $0.serial.hasPrefix(savedIP!) }  // same phone, new Wi-Fi port
+                            ?? ready.first { $0.isWireless } ?? parsedDevices.first
                     }
                 }
             } catch {
