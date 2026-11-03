@@ -227,7 +227,8 @@ public final class DashboardViewController: NSViewController {
             ("Mirror", "iphone.gen3", "Show and control the phone screen", #selector(mirrorClicked(_:))),
             ("Find My Phone", "speaker.wave.3.fill", "Ring the phone loudly for 15 seconds", #selector(findPhoneClicked(_:))),
             ("Do Not Disturb", "moon.fill", "Choose the phone's Do Not Disturb mode", #selector(dndClicked(_:))),
-            ("Send File", "square.and.arrow.up", "Send files from this Mac to the phone", #selector(sendFileClicked(_:)))
+            ("Send File", "square.and.arrow.up", "Send files from this Mac to the phone", #selector(sendFileClicked(_:))),
+            ("Webcam", "video.fill", "Use the phone camera as \"OBS Virtual Camera\" in calls; click again to stop", #selector(webcamClicked(_:)))
         ]
         let symbolConfig = NSImage.SymbolConfiguration(pointSize: 20, weight: .regular)
         for (title, symbol, tip, action) in actions {
@@ -494,6 +495,10 @@ public final class DashboardViewController: NSViewController {
         if panel.runModal() == .OK {
             connectionManager.fileTransferService.sendFiles(urls: panel.urls)
         }
+    }
+
+    @objc private func webcamClicked(_ sender: NSButton) {
+        (NSApp.delegate as? AppDelegate)?.toggleWebcam(sender)
     }
 
     @objc private func findPhoneClicked(_ sender: NSButton) {

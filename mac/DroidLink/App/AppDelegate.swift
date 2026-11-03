@@ -240,7 +240,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Menu Actions
 
     /// Phone camera -> OBS Virtual Camera, via the same kind of launcher script as mirroring.
-    @objc private func toggleWebcam(_ sender: Any?) {
+    @objc func toggleWebcam(_ sender: Any?) {
         if let p = webcamProcess, p.isRunning {
             p.terminate()
             return
