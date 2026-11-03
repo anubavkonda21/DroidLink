@@ -44,19 +44,6 @@ public final class DashboardViewController: NSViewController {
         glass.material = .underWindowBackground
         glass.blendingMode = .behindWindow
         glass.state = .followsWindowActiveState
-        // soft indigo-to-violet glow at the top, fading out (matches the phone app)
-        let glow = CAGradientLayer()
-        glow.colors = [NSColor.droidAccent.withAlphaComponent(0.22).cgColor,
-                       NSColor.droidGlow.withAlphaComponent(0.08).cgColor,
-                       NSColor.clear.cgColor]
-        glow.locations = [0, 0.35, 0.7]
-        glow.startPoint = CGPoint(x: 0.5, y: 1)
-        glow.endPoint = CGPoint(x: 0.5, y: 0)
-        let glowView = NSView(frame: glass.bounds)
-        glowView.layer = glow
-        glowView.wantsLayer = true
-        glowView.autoresizingMask = [.width, .height]
-        glass.addSubview(glowView)
         glass.addSubview(scrollView)
         self.view = glass
 
@@ -151,7 +138,7 @@ public final class DashboardViewController: NSViewController {
 
     /// Glass card: a lighter frosted panel with a hairline highlight border.
     private func createCardView() -> NSView {
-        let card = NSVisualEffectView()
+        let card = GlassCardView()
         card.material = .popover
         card.blendingMode = .withinWindow
         card.state = .active
@@ -167,7 +154,6 @@ public final class DashboardViewController: NSViewController {
         card.layer?.cornerRadius = 16
         card.layer?.cornerCurve = .continuous
         card.layer?.borderWidth = 1
-        card.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         return card
     }
 
@@ -611,8 +597,21 @@ final class GlassTileButton: NSButton {
         layer?.cornerRadius = 12
         layer?.cornerCurve = .continuous
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
         updateFill()
+    }
+
+    // layer colours are fixed CGColors, so re-resolve them when switching light/dark
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateFill()
+    }
+
+    // a double-click shouldn't ring the phone twice or open two file pickers
+    private var lastFire = Date.distantPast
+    override func sendAction(_ action: Selector?, to target: Any?) -> Bool {
+        guard Date().timeIntervalSince(lastFire) > 0.8 else { return false }
+        lastFire = Date()
+        return super.sendAction(action, to: target)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -668,10 +667,30 @@ final class GlassTileButton: NSButton {
 
     private func updateFill() {
         let alpha: CGFloat = isHighlighted ? 0.04 : hovering ? 0.16 : 0.08
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.15
-            ctx.allowsImplicitAnimation = true
-            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                ctx.allowsImplicitAnimation = true
+                layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
+                layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
+            }
+        }
+    }
+}
+
+/// Frosted card whose hairline border follows light/dark mode.
+final class GlassCardView: NSVisualEffectView {
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateBorder()
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateBorder()
+    }
+    private func updateBorder() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
         }
     }
 }

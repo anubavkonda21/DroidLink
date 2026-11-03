@@ -43,8 +43,8 @@ public enum ConnectionStatus: Equatable {
             return "Mirroring \(info.name)"
         case .reconnecting(let attempt):
             return "Reconnecting (Attempt \(attempt))..."
-        case .error(let msg):
-            return "Error: \(msg)"
+        case .error: // raw error text stays out of the UI
+            return "Can't reach the phone"
         }
     }
 }

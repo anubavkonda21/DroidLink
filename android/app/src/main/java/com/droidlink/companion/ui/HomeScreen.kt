@@ -53,7 +53,8 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.animateContentSize
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.BatteryStd
@@ -81,7 +82,6 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -167,7 +167,6 @@ fun HomeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(glassBackdrop())
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -219,7 +218,7 @@ fun HomeScreen(
             border = glassBorder()
         ) {
             Column(
-                modifier = Modifier.padding(20.dp)
+                modifier = Modifier.padding(16.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically
@@ -294,7 +293,7 @@ fun HomeScreen(
                         ) {
                             Icon(Icons.Default.LinkOff, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Disconnect", maxLines = 1, softWrap = false)
+                            Text("Disconnect", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         }
 
                         // Mirroring Toggle Button
@@ -322,7 +321,7 @@ fun HomeScreen(
                             ) {
                                 Icon(Icons.Default.Cast, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Mirror Screen", maxLines = 1, softWrap = false)
+                                Text("Mirror Screen", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                             }
                         }
                     } else {
@@ -527,9 +526,18 @@ private fun RowScope.QuickActionTile(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector
 ) {
+    // ignore a second tap within 800 ms so one double-tap doesn't send twice
+    var lastTap by remember { mutableStateOf(0L) }
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (pressed) 0.95f else 1f, label = "tilePress")
     Card(
-        onClick = onClick,
-        modifier = Modifier.weight(1f),
+        onClick = {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - lastTap > 800) { lastTap = now; onClick() }
+        },
+        interactionSource = interaction,
+        modifier = Modifier.weight(1f).graphicsLayer { scaleX = scale; scaleY = scale },
         shape = RoundedCornerShape(20.dp),
         colors = glassCardColors(),
         border = glassBorder()
@@ -571,7 +579,7 @@ private fun MacCard(status: kotlinx.serialization.json.JsonObject) {
         colors = glassCardColors(),
         border = glassBorder()
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Laptop, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(10.dp))
@@ -676,14 +684,6 @@ private fun MacCard(status: kotlinx.serialization.json.JsonObject) {
         )
     }
 }
-
-/** Soft accent glow fading into the page colour; the glass cards float on top of it. */
-@Composable
-private fun glassBackdrop() = Brush.verticalGradient(
-    0f to MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-    0.45f to MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
-    1f to MaterialTheme.colorScheme.background
-)
 
 /** Frosted card: a faint translucent fill, so the backdrop glows through. */
 @Composable

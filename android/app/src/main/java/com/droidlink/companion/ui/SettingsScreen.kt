@@ -69,24 +69,25 @@ fun SettingsScreen() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE) }
 
+    // Every setting is saved as it changes, so it survives app restarts and updates
     // Video settings
-    var selectedResolution by remember { mutableStateOf("1080p (1920x1080)") }
-    var selectedFps by remember { mutableIntStateOf(60) }
-    var selectedCodec by remember { mutableStateOf("H.264 (AVC)") }
-    var bitrateMbps by remember { mutableFloatStateOf(8.0f) }
+    var selectedResolution by remember { prefs.stringPref("resolution", "1080p (1920x1080)") }
+    var selectedFps by remember { prefs.intPref("fps", 60) }
+    var selectedCodec by remember { prefs.stringPref("codec", "H.264 (AVC)") }
+    var bitrateMbps by remember { prefs.floatPref("bitrate_mbps", 8.0f) }
 
     // Connection settings
-    var preferredMode by remember { mutableStateOf(Constants.MODE_AUTO) }
-    var servicePort by remember { mutableStateOf(Constants.DEFAULT_CONTROL_PORT.toString()) }
+    var preferredMode by remember { prefs.stringPref("preferred_mode", Constants.MODE_AUTO) }
+    var servicePort by remember { prefs.stringPref("service_port", Constants.DEFAULT_CONTROL_PORT.toString()) }
 
     // Clipboard & Notifications
-    var clipboardAutoSync by remember { mutableStateOf(true) }
-    var otpForwarding by remember { mutableStateOf(true) }
-    var autoAcceptFiles by remember { mutableStateOf(false) }
+    var clipboardAutoSync by remember { prefs.boolPref("clipboard_auto_sync", true) }
+    var otpForwarding by remember { prefs.boolPref("otp_forwarding", true) }
+    var autoAcceptFiles by remember { prefs.boolPref("auto_accept_files", false) }
 
     // Security
-    var requirePin by remember { mutableStateOf(false) }
-    var encryptionEnabled by remember { mutableStateOf(true) }
+    var requirePin by remember { prefs.boolPref("require_pin", false) }
+    var encryptionEnabled by remember { prefs.boolPref("encryption", true) }
 
     // Dialogs
     var showResolutionDialog by remember { mutableStateOf(false) }
@@ -470,3 +471,22 @@ private fun SettingsSwitchRow(title: String, subtitle: String, checked: Boolean,
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
+
+/** A Compose state that writes every change straight to SharedPreferences. */
+private class PrefState<T>(initial: T, private val save: (T) -> Unit) : androidx.compose.runtime.MutableState<T> {
+    private val state = mutableStateOf(initial)
+    override var value: T
+        get() = state.value
+        set(v) { state.value = v; save(v) }
+    override fun component1() = value
+    override fun component2(): (T) -> Unit = { value = it }
+}
+
+private fun android.content.SharedPreferences.boolPref(key: String, default: Boolean) =
+    PrefState(getBoolean(key, default)) { edit().putBoolean(key, it).apply() }
+private fun android.content.SharedPreferences.stringPref(key: String, default: String) =
+    PrefState(getString(key, default) ?: default) { edit().putString(key, it).apply() }
+private fun android.content.SharedPreferences.intPref(key: String, default: Int) =
+    PrefState(getInt(key, default)) { edit().putInt(key, it).apply() }
+private fun android.content.SharedPreferences.floatPref(key: String, default: Float) =
+    PrefState(getFloat(key, default)) { edit().putFloat(key, it).apply() }

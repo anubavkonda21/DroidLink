@@ -359,7 +359,7 @@ public final class MirrorViewController: NSViewController, NSDraggingDestination
                 _ = try? await adb.executeADB(["shell", "rm", remote])
                 await MainActor.run { self.showToast(message: "Screenshot saved to Desktop") }
             } catch {
-                await MainActor.run { self.showToast(message: "Screenshot failed: \(error.localizedDescription)") }
+                await MainActor.run { self.showToast(message: "Couldn't take a screenshot. Try again.") }
             }
         }
     }

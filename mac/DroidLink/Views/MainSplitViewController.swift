@@ -229,12 +229,16 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
                 let alert = NSAlert()
                 alert.alertStyle = .warning
                 alert.messageText = "Couldn't start phone mirroring"
-                alert.informativeText = tail.isEmpty ? "The mirror script exited with code \(proc.terminationStatus)." : tail
+                print("Mirror script failed (\(proc.terminationStatus)):\n\(tail)") // raw log stays in the console
+                alert.informativeText = "Check that the phone is unlocked, on the same Wi-Fi or plugged in, and that USB debugging is on. Then click Mirror again."
                 alert.runModal()
             }
         }
         do { try p.run() } catch {
-            let alert = NSAlert(error: error)
+            print("Mirror launch failed: \(error)")
+            let alert = NSAlert()
+            alert.messageText = "Couldn't start phone mirroring"
+            alert.informativeText = "The mirroring helper is missing or couldn't open. Reinstall DroidLink and try again."
             alert.runModal()
         }
     }
@@ -343,7 +347,7 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
 
         if let bat = statusBatteryLabel {
             if let info = connectionManager.currentDeviceInfo, isConnected {
-                bat.stringValue = "\(info.batteryLevel)% ⚡"
+                bat.stringValue = "\(info.batteryLevel)%" + (info.isCharging ? " charging" : "")
             } else {
                 bat.stringValue = ""
             }
