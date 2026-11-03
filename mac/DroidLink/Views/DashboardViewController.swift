@@ -48,7 +48,7 @@ public final class DashboardViewController: NSViewController {
         glass.addSubview(scrollView)
         self.view = glass
 
-        let content = NSView()
+        let content = FlippedView() // flipped so short content sits at the top, not the bottom, of a tall window
         content.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = content
 
@@ -66,10 +66,15 @@ public final class DashboardViewController: NSViewController {
             content.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
 
             mainStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 28),
-            mainStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
-            mainStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
+            // fill the width with 28pt margins, but stop at 960pt and centre (full screen stays readable)
+            mainStack.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            mainStack.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 28),
+            mainStack.widthAnchor.constraint(lessThanOrEqualToConstant: 960),
             mainStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28)
         ])
+        let fillWidth = mainStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28)
+        fillWidth.priority = .defaultHigh
+        fillWidth.isActive = true
 
         // 1. Header Banner
         let headerCard = createHeaderCard()
@@ -176,7 +181,8 @@ public final class DashboardViewController: NSViewController {
         ])
 
         let iconView = NSImageView()
-        iconView.image = NSImage(systemSymbolName: "smartphone", accessibilityDescription: "Device")
+        iconView.image = NSImage(systemSymbolName: "smartphone", accessibilityDescription: "Device")?
+            .withSymbolConfiguration(.init(pointSize: 34, weight: .regular))
         iconView.contentTintColor = .droidAccent
         iconView.widthAnchor.constraint(equalToConstant: 44).isActive = true
         iconView.heightAnchor.constraint(equalToConstant: 44).isActive = true
@@ -710,4 +716,9 @@ final class GlassCardView: NSVisualEffectView {
             layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
         }
     }
+}
+
+/// Top-anchored document view for scroll views.
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
