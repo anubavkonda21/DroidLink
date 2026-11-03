@@ -2,7 +2,7 @@
  * DroidLink Android Companion Application
  * Copyright (c) 2026 DroidLink Project. All rights reserved.
  *
- * Material 3 application theme, dynamic color adaptation, and custom indigo/violet palette.
+ * Material 3 application theme, dynamic color adaptation, and custom blue palette.
  */
 
 package com.droidlink.companion.ui.theme
@@ -23,43 +23,42 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// DroidLink palette (AJ's choice: indigo & violet). Keep in sync with mac/DroidLink/Models/Palette.swift.
-val Indigo = Color(0xFF5E5CE6)
-val IndigoLight = Color(0xFF9B99FF)
-val IndigoDark = Color(0xFF3634A3)
-val Violet = Color(0xFFBF5AF2)
-val VioletLight = Color(0xFFDA8FFF)
+// DroidLink palette: Apple blue on neutral greys (AJ: no purple/indigo/violet). Keep in sync with mac/DroidLink/Models/Palette.swift.
+val Blue = Color(0xFF0A84FF)
+val BlueLight = Color(0xFF64B5FF)
+val BlueDark = Color(0xFF0060C7)
+val Teal = Color(0xFF30B0C7)
 
 private val DarkColorScheme = darkColorScheme(
-    primary = IndigoLight,
-    onPrimary = Color(0xFF14123D),
-    primaryContainer = IndigoDark,
+    primary = BlueLight,
+    onPrimary = Color(0xFF00213F),
+    primaryContainer = BlueDark,
     onPrimaryContainer = Color.White,
-    secondary = VioletLight,
-    onSecondary = Color(0xFF2A0D3D),
-    tertiary = Violet,
-    background = Color(0xFF0D0D14),
-    onBackground = Color(0xFFE6E5F0),
-    surface = Color(0xFF15151F),
-    onSurface = Color(0xFFE6E5F0),
-    surfaceVariant = Color(0xFF23232F),
-    onSurfaceVariant = Color(0xFFC6C4D6)
+    secondary = Teal,
+    onSecondary = Color.Black,
+    tertiary = Teal,
+    background = Color(0xFF000000),
+    onBackground = Color(0xFFF2F2F7),
+    surface = Color(0xFF1C1C1E),
+    onSurface = Color(0xFFF2F2F7),
+    surfaceVariant = Color(0xFF2C2C2E),
+    onSurfaceVariant = Color(0xFFAEAEB2)
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Indigo,
+    primary = Blue,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE2E1FF),
-    onPrimaryContainer = IndigoDark,
-    secondary = Violet,
+    primaryContainer = Color(0xFFD6E9FF),
+    onPrimaryContainer = BlueDark,
+    secondary = Teal,
     onSecondary = Color.White,
-    tertiary = Violet,
-    background = Color(0xFFF6F5FB),
-    onBackground = Color(0xFF1A1A24),
+    tertiary = Teal,
+    background = Color(0xFFF2F2F7),
+    onBackground = Color(0xFF1C1C1E),
     surface = Color.White,
-    onSurface = Color(0xFF1A1A24),
-    surfaceVariant = Color(0xFFE6E5F1),
-    onSurfaceVariant = Color(0xFF45445A)
+    onSurface = Color(0xFF1C1C1E),
+    surfaceVariant = Color(0xFFE5E5EA),
+    onSurfaceVariant = Color(0xFF48484A)
 )
 
 @Composable

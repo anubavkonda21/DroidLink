@@ -391,7 +391,7 @@ public final class DashboardViewController: NSViewController {
         titleRow.orientation = .horizontal
         titleRow.spacing = 6
         let icon = NSImageView(image: NSImage(systemSymbolName: "display", accessibilityDescription: nil) ?? NSImage())
-        icon.contentTintColor = .systemPurple
+        icon.contentTintColor = .systemTeal
         titleRow.addArrangedSubview(icon)
         titleRow.addArrangedSubview(NSTextField(labelWithString: "Screen"))
         stack.addArrangedSubview(titleRow)
