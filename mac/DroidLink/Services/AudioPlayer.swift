@@ -9,10 +9,8 @@
 import Foundation
 import AVFoundation
 import AudioToolbox
-import Observation
 
 /// Low-latency real-time audio playback engine for Android audio forwarding.
-@Observable
 public final class AudioPlayer: @unchecked Sendable {
     // MARK: - Observable State
 

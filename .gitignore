@@ -108,3 +108,4 @@ protocol/generated/
 *.pb.swift
 *_pb2.py
 *.pb.go
+mac/DroidLink/DroidLink.app/

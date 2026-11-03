@@ -8,15 +8,21 @@
 
 import Foundation
 import UserNotifications
-import Observation
+
+extension NotificationBridge {
+    public static let didUpdateNotificationsNotification = Notification.Name("NotificationBridgeDidUpdateNotificationsNotification")
+}
 
 /// Manages incoming notifications from Android, integrates with macOS Notification Center,
 /// and routes user replies back to the Android companion app.
-@Observable
 public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
-    // MARK: - Observable State
+    // MARK: - State
 
-    public var notifications: [AndroidNotification] = []
+    public var notifications: [AndroidNotification] = [] {
+        didSet {
+            NotificationCenter.default.post(name: NotificationBridge.didUpdateNotificationsNotification, object: self)
+        }
+    }
     public var mutedAppPackages: Set<String> = []
     public var isSoundEnabled: Bool = true
     public var isSyncEnabled: Bool = true
@@ -52,7 +58,12 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
 
     // MARK: - UNUserNotificationCenter Setup
 
+    private var isNotificationCenterAvailable: Bool {
+        Bundle.main.bundleIdentifier != nil
+    }
+
     private func requestAuthorization() {
+        guard isNotificationCenterAvailable else { return }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
@@ -63,6 +74,7 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
     }
 
     private func setupNotificationCategories() {
+        guard isNotificationCenterAvailable else { return }
         let replyAction = UNTextInputNotificationAction(
             identifier: replyActionId,
             title: "Reply",
@@ -126,6 +138,7 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
     // MARK: - Native macOS Notification Posting
 
     private func postMacSystemNotification(_ notification: AndroidNotification) {
+        guard isNotificationCenterAvailable else { return }
         let content = UNMutableNotificationContent()
         content.title = "\(notification.appName) — \(notification.title)"
         content.body = notification.body
@@ -204,7 +217,9 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
         let payload = NotificationDismissPayload(notificationId: id)
         onDismiss?(payload)
 
-        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+        if isNotificationCenterAvailable {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+        }
 
         DispatchQueue.main.async {
             self.notifications.removeAll(where: { $0.id == id })
@@ -212,7 +227,9 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
     }
 
     public func clearAll() {
-        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        if isNotificationCenterAvailable {
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        }
         DispatchQueue.main.async {
             self.notifications.removeAll()
         }

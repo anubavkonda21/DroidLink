@@ -9,7 +9,6 @@
 import Foundation
 import MetalKit
 import CoreVideo
-import Observation
 
 /// Vertex structure matching Metal shader definitions
 struct MirrorVertex {
@@ -18,7 +17,6 @@ struct MirrorVertex {
 }
 
 /// Renderer responsible for drawing CVPixelBuffers efficiently using Metal.
-@Observable
 public final class MetalRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
     // MARK: - Observable Metrics
 

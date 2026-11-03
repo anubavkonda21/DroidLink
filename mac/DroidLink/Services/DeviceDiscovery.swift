@@ -8,7 +8,6 @@
 
 import Foundation
 import Network
-import Observation
 
 /// Unified representation of a detected Android device across USB and Wi-Fi transports.
 public struct DiscoveredDevice: Identifiable, Equatable, Hashable, Sendable {
@@ -62,12 +61,19 @@ public struct DiscoveredDevice: Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
-/// Service that discovers Android devices concurrently via mDNS (Bonjour) and ADB USB/TCP.
-@Observable
-public final class DeviceDiscovery: @unchecked Sendable {
-    // MARK: - Observable State
+extension DeviceDiscovery {
+    public static let didUpdateDevicesNotification = Notification.Name("DeviceDiscoveryDidUpdateDevicesNotification")
+}
 
-    public var discoveredDevices: [DiscoveredDevice] = []
+/// Service that discovers Android devices concurrently via mDNS (Bonjour) and ADB USB/TCP.
+public final class DeviceDiscovery: @unchecked Sendable {
+    // MARK: - State
+
+    public var discoveredDevices: [DiscoveredDevice] = [] {
+        didSet {
+            NotificationCenter.default.post(name: DeviceDiscovery.didUpdateDevicesNotification, object: self)
+        }
+    }
     public var isBrowsing: Bool = false
     public var autoConnectEnabled: Bool = true
 

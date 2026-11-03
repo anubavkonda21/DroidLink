@@ -7,15 +7,25 @@
 //
 
 import Foundation
-import Observation
+
+extension FileTransferService {
+    public static let didUpdateTransfersNotification = Notification.Name("FileTransferServiceDidUpdateTransfersNotification")
+}
 
 /// Service managing file transfers between macOS and Android via ADB or Wi-Fi TCP streams.
-@Observable
 public final class FileTransferService: @unchecked Sendable {
-    // MARK: - Observable State
+    // MARK: - State
 
-    public var activeTransfers: [FileTransferItem] = []
-    public var transferHistory: [FileTransferItem] = []
+    public var activeTransfers: [FileTransferItem] = [] {
+        didSet {
+            NotificationCenter.default.post(name: FileTransferService.didUpdateTransfersNotification, object: self)
+        }
+    }
+    public var transferHistory: [FileTransferItem] = [] {
+        didSet {
+            NotificationCenter.default.post(name: FileTransferService.didUpdateTransfersNotification, object: self)
+        }
+    }
     public var isAutoOrganizeEnabled: Bool = true
     public var defaultDownloadPath: String = {
         FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? "/Users/Shared"

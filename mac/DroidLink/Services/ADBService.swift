@@ -7,7 +7,6 @@
 //
 
 import Foundation
-import Observation
 
 /// Represents an ADB device entry parsed from `adb devices -l`
 public struct ADBDevice: Identifiable, Equatable, Hashable {
@@ -45,17 +44,34 @@ public struct ADBDevice: Identifiable, Equatable, Hashable {
     }
 }
 
+extension ADBService {
+    public static let didUpdateDevicesNotification = Notification.Name("ADBServiceDidUpdateDevicesNotification")
+    public static let didChangeStateNotification = Notification.Name("ADBServiceDidChangeStateNotification")
+}
+
 /// Service managing the Android Debug Bridge (ADB) lifecycle and commands.
-@Observable
 public final class ADBService: @unchecked Sendable {
     // MARK: - State Properties
 
-    public var isAdbAvailable: Bool = false
+    public var isAdbAvailable: Bool = false {
+        didSet { NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self) }
+    }
     public var adbPath: String? = nil
-    public var devices: [ADBDevice] = []
-    public var selectedDevice: ADBDevice? = nil
-    public var isScanning: Bool = false
-    public var lastError: String? = nil
+    public var devices: [ADBDevice] = [] {
+        didSet {
+            NotificationCenter.default.post(name: ADBService.didUpdateDevicesNotification, object: self)
+            NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self)
+        }
+    }
+    public var selectedDevice: ADBDevice? = nil {
+        didSet { NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self) }
+    }
+    public var isScanning: Bool = false {
+        didSet { NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self) }
+    }
+    public var lastError: String? = nil {
+        didSet { NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self) }
+    }
 
     // MARK: - Private State
 

@@ -18,7 +18,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Bundle
-import android.service.notification.NotificationListenerService
+import android.service.notification.NotificationListenerService as AndroidNotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Base64
 import android.util.Log
@@ -35,7 +35,7 @@ import java.io.ByteArrayOutputStream
 /**
  * Listens for system notifications and relays them to connected Mac workstation.
  */
-class NotificationListenerService : NotificationListenerService() {
+class NotificationListenerService : AndroidNotificationListenerService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 

@@ -8,18 +8,32 @@
 
 import Foundation
 import AppKit
-import Observation
+
+extension ClipboardSync {
+    public static let didUpdateClipboardNotification = Notification.Name("ClipboardSyncDidUpdateClipboardNotification")
+}
 
 /// Service managing bidirectional clipboard synchronization and OTP auto-detection.
-@Observable
 public final class ClipboardSync: @unchecked Sendable {
-    // MARK: - Observable State
+    // MARK: - State
 
     public var isAutoSyncEnabled: Bool = true
     public var isOtpAutoForwardEnabled: Bool = true
-    public var history: [ClipboardItem] = []
-    public var lastCopiedItem: ClipboardItem? = nil
-    public var detectedOtp: String? = nil
+    public var history: [ClipboardItem] = [] {
+        didSet {
+            NotificationCenter.default.post(name: ClipboardSync.didUpdateClipboardNotification, object: self)
+        }
+    }
+    public var lastCopiedItem: ClipboardItem? = nil {
+        didSet {
+            NotificationCenter.default.post(name: ClipboardSync.didUpdateClipboardNotification, object: self)
+        }
+    }
+    public var detectedOtp: String? = nil {
+        didSet {
+            NotificationCenter.default.post(name: ClipboardSync.didUpdateClipboardNotification, object: self)
+        }
+    }
 
     // MARK: - Outgoing Callback
 
