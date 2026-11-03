@@ -142,10 +142,17 @@ public final class DashboardViewController: NSViewController {
         card.material = .popover
         card.blendingMode = .withinWindow
         card.state = .active
+        // NSVisualEffectView ignores layer corner masks, so round the material with a stretchable mask image
+        let mask = NSImage(size: NSSize(width: 33, height: 33), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 16, yRadius: 16).fill()
+            return true
+        }
+        mask.capInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        card.maskImage = mask
         card.wantsLayer = true
         card.layer?.cornerRadius = 16
         card.layer?.cornerCurve = .continuous
-        card.layer?.masksToBounds = true
         card.layer?.borderWidth = 1
         card.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         return card
@@ -585,6 +592,7 @@ public final class DashboardViewController: NSViewController {
 /// Borderless translucent tile that brightens on hover and dims while pressed.
 final class GlassTileButton: NSButton {
     private var hovering = false { didSet { updateFill() } }
+    private var hoverArea: NSTrackingArea?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -601,8 +609,11 @@ final class GlassTileButton: NSButton {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+        // replace only our own area; NSButton keeps its own (tooltips)
+        hoverArea.map(removeTrackingArea)
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        hoverArea = area
     }
 
     override func mouseEntered(with event: NSEvent) { hovering = true }
