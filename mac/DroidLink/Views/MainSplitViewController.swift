@@ -47,7 +47,7 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
     private var detailItem: NSSplitViewItem?
 
     private var sidebarTableView: NSTableView!
-    private var currentSection: NavigationSection = .mirror
+    private var currentSection: NavigationSection = .dashboard
 
     // Cached view controllers
     private lazy var mirrorVC = MirrorViewController()
@@ -72,7 +72,7 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
         setupDetail()
         setupNotifications()
 
-        sidebarTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        sidebarTableView.selectRowIndexes(IndexSet(integer: NavigationSection.dashboard.rawValue), byExtendingSelection: false) // open on Dashboard; mirroring starts only from a Mirror click
     }
 
     public override func viewDidAppear() {
@@ -160,7 +160,7 @@ public final class MainSplitViewController: NSSplitViewController, NSTableViewDa
     // MARK: - Detail Setup
 
     private func setupDetail() {
-        let dItem = NSSplitViewItem(viewController: mirrorVC)
+        let dItem = NSSplitViewItem(viewController: dashboardVC)
         dItem.minimumThickness = 500
         detailItem = dItem
         addSplitViewItem(dItem)

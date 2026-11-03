@@ -229,7 +229,7 @@ public final class DashboardViewController: NSViewController {
         btnRow.addArrangedSubview(dndBtn)
 
         // Icon + text, with a tooltip, so each action is self-explanatory
-        let tips = ["Ring the phone loudly for 15 seconds", "Turn the phone's Do Not Disturb on or off"]
+        let tips = ["Ring the phone loudly for 15 seconds", "Choose the phone's Do Not Disturb mode"]
         for (button, tip) in zip(btnRow.arrangedSubviews.compactMap { $0 as? NSButton }, tips) {
             button.imagePosition = .imageLeading
             button.bezelStyle = .rounded
@@ -477,18 +477,44 @@ public final class DashboardViewController: NSViewController {
         connectionManager.sendControlMessage(type: .findPhone, payload: [String: String]())
     }
 
-    /// Toggles Do Not Disturb on the phone (zen_mode 0 = off).
+    /// (title, `cmd notification set_dnd` argument, matching `zen_mode` value)
+    private let dndModes: [(String, String, String)] = [
+        ("Off", "off", "0"),
+        ("Priority only", "priority", "1"),
+        ("Alarms only", "alarms", "3"),
+        ("Total silence", "none", "2")
+    ]
+
+    /// Shows the phone's Do Not Disturb modes, with the current one ticked.
     @objc private func dndClicked(_ sender: NSButton) {
         let adb = connectionManager.adbService
         Task {
             let current = (try? await adb.executeADB(["shell", "settings", "get", "global", "zen_mode"]))?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0"
-            let turnOn = current == "0"
-            let ok = (try? await adb.executeADB(["shell", "cmd", "notification", "set_dnd", turnOn ? "on" : "off"])) != nil
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             await MainActor.run {
-                let alert = NSAlert()
-                alert.messageText = ok ? "Do Not Disturb is \(turnOn ? "on" : "off")" : "Couldn't change Do Not Disturb"
-                alert.runModal()
+                let menu = NSMenu()
+                for (i, mode) in self.dndModes.enumerated() {
+                    let item = NSMenuItem(title: mode.0, action: #selector(self.dndModeChosen(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.tag = i
+                    item.state = mode.2 == current ? .on : .off
+                    menu.addItem(item)
+                }
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+            }
+        }
+    }
+
+    @objc private func dndModeChosen(_ item: NSMenuItem) {
+        let mode = dndModes[item.tag]
+        Task {
+            let ok = (try? await connectionManager.adbService.executeADB(["shell", "cmd", "notification", "set_dnd", mode.1])) != nil
+            if !ok {
+                await MainActor.run {
+                    let alert = NSAlert()
+                    alert.messageText = "Couldn't change Do Not Disturb"
+                    alert.runModal()
+                }
             }
         }
     }
