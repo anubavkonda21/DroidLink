@@ -53,6 +53,28 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.animation.animateContentSize
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.BatteryStd
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Laptop
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.VolumeDown
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.OutlinedCard
@@ -111,6 +133,7 @@ fun HomeScreen(
     val context = LocalContext.current
     val connectionState by ConnectionService.connectionState.collectAsState()
     val latencyMs by ConnectionService.latencyMs.collectAsState()
+    val macStatus by ConnectionService.macStatus.collectAsState()
 
     var showManualIpDialog by remember { mutableStateOf(false) }
     var targetIpInput by remember { mutableStateOf("") }
@@ -326,6 +349,11 @@ fun HomeScreen(
             }
         }
 
+        macStatus?.takeIf { connectionState.isConnected }?.let {
+            Spacer(modifier = Modifier.height(12.dp))
+            MacCard(it)
+        }
+
         Spacer(modifier = Modifier.height(20.dp))
 
         // Quick Actions Section
@@ -509,5 +537,136 @@ private fun RowScope.QuickActionTile(
             Spacer(Modifier.height(6.dp))
             Text(label, style = MaterialTheme.typography.labelMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
+    }
+}
+
+private fun macCommand(action: String) =
+    ConnectionService.broadcastProtocolMessage(ProtocolMessage.MacCommand(action))
+
+/** The Mac's battery at a glance; tap to expand storage, volume, media and power controls. */
+@Composable
+private fun MacCard(status: kotlinx.serialization.json.JsonObject) {
+    fun int(key: String) = status[key]?.jsonPrimitive?.intOrNull
+    fun bool(key: String) = status[key]?.jsonPrimitive?.booleanOrNull == true
+    var expanded by remember { mutableStateOf(false) }
+    var confirmSleep by remember { mutableStateOf(false) }
+
+    val battery = int("batteryLevel")
+    val charging = bool("isCharging")
+    val batteryColor = when {
+        charging || (battery ?: 100) > 30 -> Color(0xFF43A047)
+        battery!! >= 15 -> Color(0xFFFB8C00)
+        else -> Color(0xFFE53935)
+    }
+
+    Card(
+        onClick = { expanded = !expanded },
+        modifier = Modifier.fillMaxWidth().animateContentSize(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Laptop, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        status["name"]?.jsonPrimitive?.content ?: "Mac",
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1
+                    )
+                    val minutes = int("minutesRemaining")
+                    Text(
+                        when {
+                            battery == null -> "Plugged in"
+                            charging -> "Charging" + (minutes?.let { " • full in ${it / 60}h ${it % 60}m" } ?: "")
+                            bool("onPower") -> "Plugged in, not charging"
+                            else -> "On battery" + (minutes?.let { " • ${it / 60}h ${it % 60}m left" } ?: "")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                battery?.let {
+                    Icon(
+                        if (charging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryStd,
+                        contentDescription = null, tint = batteryColor, modifier = Modifier.size(20.dp)
+                    )
+                    Text("$it%", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = batteryColor)
+                }
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            battery?.let {
+                Spacer(Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    progress = { it / 100f },
+                    color = batteryColor,
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                )
+            }
+
+            if (expanded) {
+                Spacer(Modifier.height(16.dp))
+                val free = int("storageFreeGB") ?: 0
+                val total = int("storageTotalGB")?.takeIf { it > 0 } ?: 1
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Storage, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Storage", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text("$free GB free of $total GB", style = MaterialTheme.typography.bodySmall)
+                }
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { (total - free) / total.toFloat() },
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                )
+
+                Spacer(Modifier.height(16.dp))
+                val muted = bool("muted")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (muted) "Muted" else "Volume ${int("volume") ?: 0}%", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { macCommand("volume_down") }) { Icon(Icons.Default.VolumeDown, "Volume down") }
+                    IconButton(onClick = { macCommand("mute") }) { Icon(if (muted) Icons.Default.VolumeUp else Icons.Default.VolumeOff, if (muted) "Unmute" else "Mute") }
+                    IconButton(onClick = { macCommand("volume_up") }) { Icon(Icons.Default.VolumeUp, "Volume up") }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    IconButton(onClick = { macCommand("previous") }) { Icon(Icons.Default.SkipPrevious, "Previous track") }
+                    FilledTonalIconButton(onClick = { macCommand("play_pause") }) { Icon(Icons.Default.PlayArrow, "Play or pause") }
+                    IconButton(onClick = { macCommand("next") }) { Icon(Icons.Default.SkipNext, "Next track") }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { macCommand("lock") }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Lock", maxLines = 1)
+                    }
+                    OutlinedButton(onClick = { confirmSleep = true }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Bedtime, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Sleep", maxLines = 1)
+                    }
+                    IconButton(onClick = { macCommand("refresh") }) { Icon(Icons.Default.Refresh, "Refresh") }
+                }
+            }
+        }
+    }
+
+    // Sleeping drops the connection until the Mac wakes, so confirm first
+    if (confirmSleep) {
+        AlertDialog(
+            onDismissRequest = { confirmSleep = false },
+            title = { Text("Put the Mac to sleep?") },
+            text = { Text("DroidLink disconnects until the Mac wakes up.") },
+            confirmButton = { TextButton(onClick = { confirmSleep = false; macCommand("sleep") }) { Text("Sleep") } },
+            dismissButton = { TextButton(onClick = { confirmSleep = false }) { Text("Cancel") } }
+        )
     }
 }

@@ -384,6 +384,13 @@ public final class ConnectionManager: @unchecked Sendable {
                 let offer = try envelope.decodePayload(FileTransferInitPayload.self)
                 let remotePath = (offer.destinationFolder as NSString).appendingPathComponent(offer.fileName)
                 fileTransferService.pullFile(remotePath: remotePath, fileSize: offer.fileSize)
+            case .macCommand:
+                let command = try envelope.decodePayload(MacCommandPayload.self)
+                DispatchQueue.main.async {
+                    MacStatus.perform(command.action)
+                    // let volume/mute changes show up on the phone right away
+                    self.sendControlMessage(type: .macStatus, payload: MacStatus.current())
+                }
             case .heartbeat:
                 // Calculate RTT
                 let now = Date().timeIntervalSince1970
@@ -461,6 +468,7 @@ public final class ConnectionManager: @unchecked Sendable {
                 let framed = ProtocolFramer.frame(data: data)
                 self.controlConnection?.send(content: framed, completion: .idempotent)
             }
+            self.sendControlMessage(type: .macStatus, payload: MacStatus.current())
         }
     }
 

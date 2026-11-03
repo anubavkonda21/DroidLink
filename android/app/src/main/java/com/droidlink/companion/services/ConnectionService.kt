@@ -293,6 +293,7 @@ class ConnectionService : Service() {
                 InputService.key(it.int("keyCode") ?: return, it.int("action") ?: return, it.str("character"))
             }
             "find_phone" -> ringPhone()
+            "mac_status" -> _macStatus.value = p
             "disconnect" -> disconnectCurrentClients()
             else -> Log.d(TAG, "Unhandled message type: ${msg.type}")
         }
@@ -350,6 +351,7 @@ class ConnectionService : Service() {
         }
         activeClients.clear()
         activeWriters.clear()
+        _macStatus.value = null
         _connectionState.value = ConnectionState.Disconnected
         updateForegroundNotification("Not Connected")
     }
@@ -403,6 +405,10 @@ class ConnectionService : Service() {
 
         private val _latencyMs = MutableStateFlow<Long>(0L)
         val latencyMs: StateFlow<Long> = _latencyMs.asStateFlow()
+
+        /** Latest `mac_status` payload from the Mac (battery, storage, volume), null until one arrives. */
+        private val _macStatus = MutableStateFlow<JsonObject?>(null)
+        val macStatus: StateFlow<JsonObject?> = _macStatus.asStateFlow()
 
         /**
          * Global entry point for other services (Notifications, Clipboard, Calls) to broadcast messages.

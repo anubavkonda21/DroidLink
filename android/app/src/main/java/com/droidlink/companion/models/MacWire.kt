@@ -68,6 +68,7 @@ object MacWire {
                 put("mimeType", "application/octet-stream")
                 put("destinationFolder", "/sdcard/Download/DroidLink")
             }
+            is ProtocolMessage.MacCommand -> "mac_command" to buildJsonObject { put("action", message.action) }
             else -> return null
         }
         val envelope = buildJsonObject {

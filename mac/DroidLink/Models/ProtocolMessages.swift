@@ -38,6 +38,8 @@ public enum MessageType: String, Codable {
     case smsSend = "sms_send"
     case callEvent = "call_event"
     case deviceStatusUpdate = "device_status_update"
+    case macStatus = "mac_status"      // Mac -> phone: battery, storage, volume
+    case macCommand = "mac_command"    // phone -> Mac: lock, sleep, volume, media
 
     // File Transfer
     case fileTransferInit = "file_transfer_init"

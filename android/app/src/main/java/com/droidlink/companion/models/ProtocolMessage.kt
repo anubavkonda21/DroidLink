@@ -207,6 +207,11 @@ sealed class ProtocolMessage {
         val phoneNumber: String = ""
     ) : ProtocolMessage()
 
+    /** Android -> Mac: lock, sleep, volume_up/down, mute, play_pause, next, previous, refresh. */
+    @Serializable
+    @SerialName("mac_command")
+    data class MacCommand(val action: String) : ProtocolMessage()
+
     companion object {
         val jsonConfig = Json {
             ignoreUnknownKeys = true
