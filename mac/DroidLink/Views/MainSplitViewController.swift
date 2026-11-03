@@ -9,9 +9,10 @@
 import AppKit
 
 public enum NavigationSection: Int, CaseIterable {
-    case mirror = 0
-    case dashboard = 1
-    case notifications = 2
+    // sidebar order (AJ): Dashboard first, then Notifications
+    case dashboard = 0
+    case notifications = 1
+    case mirror = 2
     case files = 3
     case messages = 4
     case settings = 5
