@@ -1,0 +1,19 @@
+<resources>
+    <!-- DroidLink Teal/Green Brand Palette -->
+    <color name="droidlink_primary">#00897B</color>
+    <color name="droidlink_primary_dark">#005B4F</color>
+    <color name="droidlink_primary_light">#4EBAAA</color>
+    <color name="droidlink_accent">#00BFA5</color>
+    <color name="droidlink_secondary">#26A69A</color>
+
+    <!-- Neutral Colors -->
+    <color name="droidlink_background_light">#F8FAF9</color>
+    <color name="droidlink_surface_light">#FFFFFF</color>
+    <color name="droidlink_background_dark">#121817</color>
+    <color name="droidlink_surface_dark">#1C2422</color>
+
+    <color name="status_connected">#2E7D32</color>
+    <color name="status_disconnected">#C62828</color>
+    <color name="status_connecting">#F57F17</color>
+    <color name="status_mirroring">#00897B</color>
+</resources>

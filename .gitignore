@@ -1,0 +1,110 @@
+# =========================
+# macOS / Xcode
+# =========================
+## Build generated
+mac/DroidLink/build/
+mac/DroidLink/DerivedData/
+*.xcarchive
+
+## Xcode user settings
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+
+## Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+
+## CocoaPods
+mac/Pods/
+mac/Podfile.lock
+
+## macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+## Thumbnails
+Thumbs.db
+
+# =========================
+# Android / Gradle
+# =========================
+## Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/.externalNativeBuild/
+android/.cxx/
+
+## Android Studio
+android/.idea/
+android/*.iml
+android/*.iws
+android/*.ipr
+
+## Keystore files
+*.jks
+*.keystore
+
+## Google Services (contains API keys)
+google-services.json
+
+# =========================
+# IDE
+# =========================
+## IntelliJ / Android Studio
+.idea/
+*.iml
+*.iws
+*.ipr
+
+## VS Code
+.vscode/
+*.code-workspace
+
+# =========================
+# General
+# =========================
+## Compiled
+*.o
+*.a
+*.dylib
+*.so
+*.class
+*.jar
+*.war
+
+## Logs
+*.log
+
+## OS generated
+.DS_Store
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+## Environment
+.env
+.env.local
+
+## Temporary
+*.tmp
+*.temp
+*.swp
+*~
+
+# =========================
+# Protocol Buffers
+# =========================
+## Generated protobuf code (regenerate from .proto)
+protocol/generated/
+*.pb.swift
+*_pb2.py
+*.pb.go

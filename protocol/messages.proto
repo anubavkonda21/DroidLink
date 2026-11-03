@@ -1,0 +1,356 @@
+syntax = "proto3";
+
+package droidlink;
+
+option java_package = "com.droidlink.companion.protocol";
+option swift_prefix = "DL";
+
+// ============================================================
+// Service Definitions
+// ============================================================
+
+// Control service for bidirectional communication
+service DroidLinkControl {
+  // Initial handshake to establish connection and exchange capabilities
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  
+  // Start/stop screen mirroring
+  rpc StartMirror(MirrorConfig) returns (MirrorStatus);
+  rpc StopMirror(Empty) returns (MirrorStatus);
+  
+  // Bidirectional clipboard sync
+  rpc SyncClipboard(stream ClipboardContent) returns (stream ClipboardContent);
+  
+  // Notification stream from Android to Mac
+  rpc StreamNotifications(NotificationFilter) returns (stream AndroidNotification);
+  
+  // Send notification actions from Mac to Android
+  rpc NotificationAction(NotificationActionRequest) returns (NotificationActionResponse);
+  
+  // Device status updates
+  rpc StreamDeviceStatus(StatusRequest) returns (stream DeviceStatus);
+  
+  // File transfer negotiation
+  rpc TransferFile(stream FileChunk) returns (stream FileTransferStatus);
+  
+  // Input events from Mac to Android
+  rpc SendInput(stream InputEvent) returns (Empty);
+  
+  // SMS operations
+  rpc StreamSMS(SMSFilter) returns (stream SMSMessage);
+  rpc SendSMS(SMSSendRequest) returns (SMSSendResponse);
+  
+  // Phone call operations
+  rpc StreamCallEvents(Empty) returns (stream CallEvent);
+  rpc CallAction(CallActionRequest) returns (CallActionResponse);
+  
+  // Utility commands
+  rpc FindPhone(FindPhoneRequest) returns (Empty);
+  rpc ToggleHotspot(HotspotRequest) returns (HotspotStatus);
+}
+
+// ============================================================
+// Common Messages
+// ============================================================
+
+message Empty {}
+
+// ============================================================
+// Handshake
+// ============================================================
+
+message HandshakeRequest {
+  uint32 protocol_version = 1;
+  string app_version = 2;
+  string device_name = 3;
+  repeated string capabilities = 4;
+}
+
+message HandshakeResponse {
+  uint32 protocol_version = 1;
+  string app_version = 2;
+  string device_name = 3;
+  string device_model = 4;
+  string android_version = 5;
+  uint32 sdk_level = 6;
+  uint32 screen_width = 7;
+  uint32 screen_height = 8;
+  repeated string capabilities = 9;
+}
+
+// ============================================================
+// Mirror Configuration
+// ============================================================
+
+enum VideoCodec {
+  H264 = 0;
+  H265 = 1;
+  AV1 = 2;
+}
+
+message MirrorConfig {
+  uint32 max_width = 1;
+  uint32 max_height = 2;
+  uint32 max_fps = 3;
+  VideoCodec codec = 4;
+  uint32 bitrate_bps = 5;
+  bool audio_enabled = 6;
+  bool show_touches = 7;
+}
+
+message MirrorStatus {
+  bool active = 1;
+  uint32 actual_width = 2;
+  uint32 actual_height = 3;
+  uint32 actual_fps = 4;
+  VideoCodec actual_codec = 5;
+}
+
+// ============================================================
+// Input Events
+// ============================================================
+
+message InputEvent {
+  oneof event {
+    TouchEvent touch = 1;
+    KeyEvent key = 2;
+    TextInput text = 3;
+    ScrollEvent scroll = 4;
+  }
+}
+
+enum TouchAction {
+  TOUCH_DOWN = 0;
+  TOUCH_MOVE = 1;
+  TOUCH_UP = 2;
+}
+
+message TouchEvent {
+  TouchAction action = 1;
+  float x = 2;
+  float y = 3;
+  uint32 pointer_id = 4;
+  float pressure = 5;
+}
+
+message KeyEvent {
+  enum KeyAction {
+    KEY_DOWN = 0;
+    KEY_UP = 1;
+  }
+  KeyAction action = 1;
+  uint32 keycode = 2;
+  uint32 meta_state = 3;
+}
+
+message TextInput {
+  string text = 1;
+}
+
+message ScrollEvent {
+  float x = 1;
+  float y = 2;
+  float scroll_x = 3;
+  float scroll_y = 4;
+}
+
+// ============================================================
+// Clipboard
+// ============================================================
+
+message ClipboardContent {
+  enum ContentType {
+    TEXT = 0;
+    IMAGE = 1;
+    URI = 2;
+  }
+  ContentType content_type = 1;
+  string text = 2;
+  bytes image_data = 3;
+  string uri = 4;
+  string source = 5; // "android" or "mac"
+  uint64 timestamp = 6;
+}
+
+// ============================================================
+// Notifications
+// ============================================================
+
+message NotificationFilter {
+  repeated string excluded_packages = 1;
+  bool include_ongoing = 2;
+}
+
+message AndroidNotification {
+  string notification_id = 1;
+  string app_package = 2;
+  string app_name = 3;
+  string title = 4;
+  string text = 5;
+  uint64 timestamp = 6;
+  bool can_reply = 7;
+  bytes icon = 8;
+  string group_key = 9;
+  
+  enum Event {
+    POSTED = 0;
+    REMOVED = 1;
+    UPDATED = 2;
+  }
+  Event event = 10;
+}
+
+message NotificationActionRequest {
+  string notification_id = 1;
+  oneof action {
+    string reply_text = 2;
+    bool dismiss = 3;
+  }
+}
+
+message NotificationActionResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// ============================================================
+// File Transfer
+// ============================================================
+
+message FileChunk {
+  string transfer_id = 1;
+  
+  oneof data {
+    FileMetadata metadata = 2;  // First message: file info
+    bytes chunk = 3;            // Subsequent messages: file data
+    bool complete = 4;          // Final message: transfer complete
+  }
+}
+
+message FileMetadata {
+  string file_name = 1;
+  uint64 file_size = 2;
+  string mime_type = 3;
+  string checksum_crc32 = 4;
+  string direction = 5; // "to_android" or "to_mac"
+}
+
+message FileTransferStatus {
+  string transfer_id = 1;
+  enum Status {
+    ACCEPTED = 0;
+    IN_PROGRESS = 1;
+    COMPLETED = 2;
+    FAILED = 3;
+    CANCELLED = 4;
+  }
+  Status status = 2;
+  uint64 bytes_transferred = 3;
+  uint64 total_bytes = 4;
+  string error = 5;
+}
+
+// ============================================================
+// Device Status
+// ============================================================
+
+message StatusRequest {
+  uint32 interval_seconds = 1; // How often to send updates
+}
+
+message DeviceStatus {
+  uint32 battery_level = 1;
+  bool is_charging = 2;
+  uint64 storage_total_bytes = 3;
+  uint64 storage_free_bytes = 4;
+  string wifi_ssid = 5;
+  int32 wifi_signal_dbm = 6;
+  string cellular_type = 7; // "5G", "LTE", etc.
+  uint32 cpu_usage_percent = 8;
+  uint32 ram_used_mb = 9;
+  uint32 ram_total_mb = 10;
+}
+
+// ============================================================
+// SMS
+// ============================================================
+
+message SMSFilter {
+  // Empty for now - receive all SMS
+}
+
+message SMSMessage {
+  string message_id = 1;
+  string phone_number = 2;
+  string contact_name = 3;
+  string body = 4;
+  uint64 timestamp = 5;
+  bool is_incoming = 6;
+  bool is_read = 7;
+}
+
+message SMSSendRequest {
+  string phone_number = 1;
+  string body = 2;
+}
+
+message SMSSendResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// ============================================================
+// Phone Calls
+// ============================================================
+
+message CallEvent {
+  enum CallState {
+    RINGING = 0;
+    ACTIVE = 1;
+    ENDED = 2;
+  }
+  CallState state = 1;
+  string phone_number = 2;
+  string contact_name = 3;
+  bool is_incoming = 4;
+  uint64 duration_ms = 5;
+}
+
+message CallActionRequest {
+  enum Action {
+    ANSWER = 0;
+    REJECT = 1;
+    HANGUP = 2;
+    DIAL = 3;
+  }
+  Action action = 1;
+  string phone_number = 2; // For DIAL action
+}
+
+message CallActionResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// ============================================================
+// Utility Commands
+// ============================================================
+
+message FindPhoneRequest {
+  enum Action {
+    RING = 0;
+    STOP = 1;
+  }
+  Action action = 1;
+}
+
+message HotspotRequest {
+  bool enable = 1;
+}
+
+message HotspotStatus {
+  bool enabled = 1;
+  string ssid = 2;
+  string password = 3;
+  string error = 4;
+}

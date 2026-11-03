@@ -1,0 +1,94 @@
+<resources>
+    <string name="app_name">DroidLink</string>
+    <string name="app_tagline">Android Screen Mirroring &amp; Ecosystem</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_status">Status</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Home Screen -->
+    <string name="connection_status_connected">Connected to %1$s</string>
+    <string name="connection_status_disconnected">Not Connected</string>
+    <string name="connection_status_connecting">Connecting…</string>
+    <string name="connection_status_discovering">Discovering devices…</string>
+    <string name="connection_status_mirroring">Screen Mirroring Active</string>
+    <string name="btn_connect">Connect</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_start_mirroring">Start Mirroring</string>
+    <string name="btn_stop_mirroring">Stop Mirroring</string>
+    <string name="pair_device_title">Pair New Device</string>
+    <string name="pair_qr_code">Scan QR Code</string>
+    <string name="pair_manual_ip">Manual IP Entry</string>
+    <string name="ip_address_hint">e.g. 192.168.1.100</string>
+    <string name="port_hint">Port (default: 8080)</string>
+    <string name="quick_actions_title">Quick Actions</string>
+    <string name="action_send_clipboard">Send Clipboard</string>
+    <string name="action_send_file">Send File</string>
+    <string name="action_permissions">Permissions</string>
+    <string name="recent_activity_title">Recent Activity</string>
+    <string name="no_recent_activity">No recent activity</string>
+
+    <!-- Status Screen -->
+    <string name="active_services_title">Active Services</string>
+    <string name="service_screen_capture">Screen Capture</string>
+    <string name="service_notifications">Notification Sync</string>
+    <string name="service_clipboard">Clipboard Sync</string>
+    <string name="service_file_server">File Server</string>
+    <string name="service_call_bridge">Call Bridge</string>
+    <string name="service_connection">Connection Service</string>
+
+    <string name="connection_quality_title">Connection Quality</string>
+    <string name="latency_label">Latency</string>
+    <string name="bandwidth_label">Bandwidth</string>
+    <string name="battery_impact_title">Battery &amp; Thermal Impact</string>
+    <string name="battery_drain_estimate">Estimated drain: ~%1$d%% / hr</string>
+    <string name="thermal_status_normal">Thermal status: Normal</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_video_title">Video Settings</string>
+    <string name="setting_resolution">Resolution</string>
+    <string name="setting_fps">Frame Rate (FPS)</string>
+    <string name="setting_codec">Video Codec</string>
+    <string name="setting_bitrate">Bitrate</string>
+
+    <string name="settings_connection_title">Connection</string>
+    <string name="setting_preferred_mode">Preferred Mode</string>
+    <string name="setting_port">Service Port</string>
+    <string name="setting_auto_connect">Auto-connect on Wi-Fi</string>
+
+    <string name="settings_clipboard_title">Clipboard Sync</string>
+    <string name="setting_clipboard_autosync">Auto-sync Clipboard</string>
+    <string name="setting_otp_forwarding">Detect &amp; Forward OTPs</string>
+
+    <string name="settings_notifications_title">Notifications</string>
+    <string name="setting_notification_filter">App Notification Filters</string>
+
+    <string name="settings_file_transfer_title">File Transfer</string>
+    <string name="setting_auto_accept">Auto-accept files from trusted Mac</string>
+    <string name="setting_save_location">Save Location</string>
+
+    <string name="settings_security_title">Security</string>
+    <string name="setting_require_pin">Require PIN for connection</string>
+    <string name="setting_encryption">End-to-End Encryption</string>
+
+    <string name="settings_about_title">About DroidLink</string>
+    <string name="setting_version">Version 1.0.0 (Build 1)</string>
+    <string name="setting_github">GitHub Repository</string>
+    <string name="setting_licenses">Open Source Licenses</string>
+
+    <!-- Permissions -->
+    <string name="permission_required_title">Permissions Required</string>
+    <string name="permission_required_desc">DroidLink needs essential permissions to provide screen mirroring, clipboard sync, notifications, and file transfer.</string>
+    <string name="grant_permissions">Grant Permissions</string>
+    <string name="notification_listener_prompt">Notification Access is required to forward notifications to your Mac.</string>
+    <string name="open_notification_settings">Open Notification Access Settings</string>
+
+    <!-- Service Notification Channels -->
+    <string name="channel_mirroring_name">DroidLink Mirroring Service</string>
+    <string name="channel_mirroring_desc">Notifications showing active screen capture and mirroring state</string>
+    <string name="channel_connection_name">DroidLink Connection Service</string>
+    <string name="channel_connection_desc">Notifications showing background connectivity status with Mac</string>
+    <string name="channel_file_transfer_name">DroidLink File Transfer</string>
+    <string name="channel_file_transfer_desc">Progress notifications for file uploads and downloads</string>
+</resources>

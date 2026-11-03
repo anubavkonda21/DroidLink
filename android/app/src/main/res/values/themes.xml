@@ -1,0 +1,8 @@
+<resources>
+    <!-- Base application theme with Material3 -->
+    <style name="Theme.DroidLink" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/droidlink_primary_dark</item>
+        <item name="android:navigationBarColor">@color/droidlink_surface_light</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>
