@@ -36,7 +36,15 @@ public final class DashboardViewController: NSViewController {
         let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
-        self.view = scrollView
+        scrollView.autoresizingMask = [.width, .height]
+
+        // Frosted window background: the desktop shows through, blurred, like Apple's own apps
+        let glass = NSVisualEffectView(frame: scrollView.frame)
+        glass.material = .underWindowBackground
+        glass.blendingMode = .behindWindow
+        glass.state = .followsWindowActiveState
+        glass.addSubview(scrollView)
+        self.view = glass
 
         let content = NSView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -120,13 +128,18 @@ public final class DashboardViewController: NSViewController {
 
     // MARK: - Card Builders
 
+    /// Glass card: a lighter frosted panel with a hairline highlight border.
     private func createCardView() -> NSView {
-        let card = NSView()
+        let card = NSVisualEffectView()
+        card.material = .popover
+        card.blendingMode = .withinWindow
+        card.state = .active
         card.wantsLayer = true
-        card.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        card.layer?.cornerRadius = 12
+        card.layer?.cornerRadius = 16
+        card.layer?.cornerCurve = .continuous
+        card.layer?.masksToBounds = true
         card.layer?.borderWidth = 1
-        card.layer?.borderColor = NSColor.separatorColor.cgColor
+        card.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         return card
     }
 
@@ -228,11 +241,11 @@ public final class DashboardViewController: NSViewController {
         ]
         let symbolConfig = NSImage.SymbolConfiguration(pointSize: 20, weight: .regular)
         for (title, symbol, tip, action) in actions {
-            let button = NSButton(title: title, target: self, action: action)
+            let button = GlassTileButton(title: title, target: self, action: action)
+            button.isBordered = false // the convenience init re-enables the default bezel
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(symbolConfig)
             button.imagePosition = .imageAbove
             button.imageHugsTitle = true // centre icon + label together instead of pinning the icon to the top
-            button.bezelStyle = .regularSquare
             button.setContentHuggingPriority(.defaultLow, for: .horizontal)
             button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             button.contentTintColor = .controlAccentColor
@@ -546,6 +559,44 @@ public final class DashboardViewController: NSViewController {
                     alert.runModal()
                 }
             }
+        }
+    }
+}
+
+/// Borderless translucent tile that brightens on hover and dims while pressed.
+final class GlassTileButton: NSButton {
+    private var hovering = false { didSet { updateFill() } }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        updateFill()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    override var isHighlighted: Bool { didSet { updateFill() } }
+
+    private func updateFill() {
+        let alpha: CGFloat = isHighlighted ? 0.04 : hovering ? 0.16 : 0.08
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            ctx.allowsImplicitAnimation = true
+            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
     }
 }

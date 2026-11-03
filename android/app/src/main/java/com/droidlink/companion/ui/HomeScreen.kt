@@ -53,6 +53,7 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.animation.animateContentSize
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.BatteryStd
@@ -77,7 +78,6 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material3.CardDefaults
@@ -167,6 +167,7 @@ fun HomeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(glassBackdrop())
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -213,10 +214,9 @@ fun HomeScreen(
         // Connection Status Card
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-            )
+            shape = RoundedCornerShape(24.dp),
+            colors = glassCardColors(),
+            border = glassBorder()
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)
@@ -431,10 +431,9 @@ fun HomeScreen(
             activityLogs.take(20).forEach { log ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    )
+                    shape = RoundedCornerShape(16.dp),
+                    colors = glassCardColors(),
+                    border = glassBorder()
                 ) {
                     Row(
                         modifier = Modifier
@@ -528,7 +527,13 @@ private fun RowScope.QuickActionTile(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector
 ) {
-    OutlinedCard(onClick = onClick, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.weight(1f),
+        shape = RoundedCornerShape(20.dp),
+        colors = glassCardColors(),
+        border = glassBorder()
+    ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -562,8 +567,9 @@ private fun MacCard(status: kotlinx.serialization.json.JsonObject) {
     Card(
         onClick = { expanded = !expanded },
         modifier = Modifier.fillMaxWidth().animateContentSize(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+        shape = RoundedCornerShape(24.dp),
+        colors = glassCardColors(),
+        border = glassBorder()
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -670,3 +676,23 @@ private fun MacCard(status: kotlinx.serialization.json.JsonObject) {
         )
     }
 }
+
+/** Soft accent glow fading into the page colour; the glass cards float on top of it. */
+@Composable
+private fun glassBackdrop() = Brush.verticalGradient(
+    0f to MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+    0.45f to MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
+    1f to MaterialTheme.colorScheme.background
+)
+
+/** Frosted card: a faint translucent fill, so the backdrop glows through. */
+@Composable
+private fun glassCardColors() = CardDefaults.cardColors(
+    containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
+)
+
+/** Hairline highlight around glass cards. */
+@Composable
+private fun glassBorder() = androidx.compose.foundation.BorderStroke(
+    1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+)
