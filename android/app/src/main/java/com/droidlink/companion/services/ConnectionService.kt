@@ -264,8 +264,8 @@ class ConnectionService : Service() {
                 Log.i(TAG, "Handshake from Mac: $macName")
                 _connectionState.value = ConnectionState.Connected(deviceName = macName, hostAddress = remoteHost)
                 updateForegroundNotification("Connected to $macName")
+                // no "tap to start mirroring" prompt: mirroring is started from the Mac's Mirror button (scrcpy)
                 if (ScreenCaptureService.isRunning) ScreenCaptureService.instance?.requestSyncFrame()
-                else promptToStartMirroring(macName)
             }
             "heartbeat" -> {
                 // Mac only sends heartbeats once connected; covers a missed handshake.
@@ -296,35 +296,6 @@ class ConnectionService : Service() {
             "disconnect" -> disconnectCurrentClients()
             else -> Log.d(TAG, "Unhandled message type: ${msg.type}")
         }
-    }
-
-    /**
-     * Android needs the user to approve screen capture on the phone each time, so when the Mac
-     * connects we post a tap-to-start notification instead of leaving the Mac on a black screen.
-     */
-    private fun promptToStartMirroring(macName: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notificationManager.createNotificationChannel(
-                NotificationChannel(CHANNEL_MIRROR_PROMPT, "Start mirroring", NotificationManager.IMPORTANCE_HIGH)
-            )
-        }
-        val open = PendingIntent.getActivity(
-            this, 2,
-            Intent(this, MainActivity::class.java).setAction(MainActivity.ACTION_START_MIRRORING)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        notificationManager.notify(
-            NOTIFICATION_ID_MIRROR_PROMPT,
-            NotificationCompat.Builder(this, CHANNEL_MIRROR_PROMPT)
-                .setSmallIcon(android.R.drawable.presence_video_online)
-                .setContentTitle("$macName wants to mirror your screen")
-                .setContentText("Tap to start screen mirroring")
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setContentIntent(open)
-                .setAutoCancel(true)
-                .build()
-        )
     }
 
     /** Plays the alarm sound for 15 seconds so the phone can be found, even on silent. */
@@ -422,8 +393,6 @@ class ConnectionService : Service() {
 
     companion object {
         private const val TAG = "ConnectionService"
-        private const val CHANNEL_MIRROR_PROMPT = "droidlink_channel_mirror_prompt"
-        private const val NOTIFICATION_ID_MIRROR_PROMPT = 1004
 
         @Volatile
         var instance: ConnectionService? = null
