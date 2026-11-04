@@ -20,7 +20,7 @@ public final class OnboardingWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "DroidLink Setup Wizard"
+        window.title = "DroidLink Setup Guide"
         window.contentViewController = contentVC
         window.center()
         super.init(window: window)
@@ -39,7 +39,7 @@ public final class OnboardingWindowController: NSWindowController {
 
 public final class OnboardingViewController: NSViewController {
     private var currentStep = 0
-    private let totalSteps = 6
+    private var totalSteps: Int { steps.count }
 
     private var titleLabel: NSTextField!
     private var subtitleLabel: NSTextField!
@@ -50,43 +50,41 @@ public final class OnboardingViewController: NSViewController {
 
     private var backButton: NSButton!
     private var nextButton: NSButton!
+    private var actionButton: NSButton!
 
     private struct StepInfo {
         let title: String
         let icon: String
         let text: String
+        var button: String? = nil // optional extra action shown in the bottom bar
     }
 
     private let steps: [StepInfo] = [
         StepInfo(
             title: "Welcome to DroidLink",
-            icon: "sparkles",
-            text: "DroidLink brings your Android experience seamlessly to macOS with ultra-low latency screen mirroring, notification forwarding, clipboard synchronization, and high-speed wireless file transfers.\n\nLet's get your device configured in just a few quick steps!"
+            icon: "bolt.horizontal.fill",
+            text: "DroidLink links your Android phone to this Mac over Wi-Fi, no cable needed.\n\n• See and control your phone in a window\n• Get phone notifications, calls and texts on the Mac\n• Share the clipboard and send files both ways\n• Use the phone as a webcam\n\nSetup takes about two minutes."
         ),
         StepInfo(
-            title: "Enable Developer Options & USB Debugging",
-            icon: "hammer.fill",
-            text: "1. On your Android phone, open Settings > About Phone.\n2. Tap 'Build Number' 7 times until you see 'You are now a developer!'.\n3. Go back to Settings > System > Developer Options.\n4. Enable 'USB Debugging'.\n5. (Recommended) Enable 'Stay Awake' and 'Disable ADB authorization timeout'."
+            title: "Turn On Wireless Debugging",
+            icon: "wrench.and.screwdriver.fill",
+            text: "On your phone:\n\n1. Open Settings › About phone and tap Build number 7 times, until it says you're a developer.\n2. Go to Settings › System › Developer options.\n3. Turn on Wireless debugging and tap Allow.\n\nThe phone and the Mac must be on the same Wi-Fi for this first pairing."
         ),
         StepInfo(
-            title: "Install the Companion App",
-            icon: "arrow.down.app.fill",
-            text: "DroidLink requires a lightweight companion service running on your Android device to forward notifications, clipboard contents, and system audio.\n\nConnect via USB to install automatically, or sideload 'DroidLink-Companion.apk' onto your phone."
+            title: "Pair With a QR Code",
+            icon: "qrcode",
+            text: "1. Click Show QR Code below. A pairing code opens on the Mac.\n2. On the phone, in Wireless debugging, tap Pair device with QR code.\n3. Point the phone at the code on the Mac.\n\nThat's it. DroidLink remembers the phone and reconnects on its own next time, even after a restart. You can also add phones later from the bolt icon in the menu bar › Add Phone with QR Code.",
+            button: "Show QR Code"
         ),
         StepInfo(
-            title: "Connect Your Device",
-            icon: "cable.connector",
-            text: "Plug your Android device into your Mac using a certified USB cable.\n\nWhen prompted on your phone screen:\n1. Check 'Always allow from this computer'.\n2. Tap 'Allow' or 'OK'.\n\nDroidLink will automatically detect the device and negotiate local port forwarding."
+            title: "Open the Phone App",
+            icon: "iphone.gen3",
+            text: "Open the DroidLink app on the phone and allow what it asks for:\n\n• Notification access, so notifications appear on the Mac\n• Phone, contacts and SMS, so calls and texts show up\n• Files and photos, so you can send them to the Mac\n\nWhen it says Connected, you're linked."
         ),
         StepInfo(
-            title: "Grant Android Permissions",
-            icon: "hand.raised.fill",
-            text: "On your phone's companion app, tap to approve:\n\n• Notification Listener: Required to display Android notifications on Mac\n• Media Projection (Screen Capture): Required for screen mirroring\n• Accessibility / Input: Required to control the phone via mouse and keyboard"
-        ),
-        StepInfo(
-            title: "You're All Set!",
+            title: "You're All Set",
             icon: "checkmark.seal.fill",
-            text: "Setup is complete!\n\nYou can now mirror your Android screen at up to 60 FPS, sync your clipboard bidirectionally, receive notifications, and drag & drop files between macOS and Android.\n\nClick 'Get Started' to begin."
+            text: "Here's where everything lives:\n\n• Dashboard: phone battery, storage and quick actions\n• Mirror: shows and controls your phone screen\n• Notifications, Files and Messages: in the sidebar\n\nAway from home? If both devices are on Tailscale, DroidLink finds the phone there too.\n\nYou can reopen this guide any time with the ? button in the sidebar."
         )
     ]
 
@@ -150,6 +148,12 @@ public final class OnboardingViewController: NSViewController {
         backButton.isEnabled = false
         container.addSubview(backButton)
 
+        actionButton = NSButton(title: "", target: self, action: #selector(actionClicked(_:)))
+        actionButton.bezelStyle = .rounded
+        actionButton.bezelColor = .droidAccent
+        actionButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(actionButton)
+
         nextButton = NSButton(title: "Continue", target: self, action: #selector(nextClicked(_:)))
         nextButton.bezelStyle = .rounded
         nextButton.keyEquivalent = "\r"
@@ -188,6 +192,9 @@ public final class OnboardingViewController: NSViewController {
             backButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
             backButton.widthAnchor.constraint(equalToConstant: 90),
 
+            actionButton.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            actionButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+
             nextButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
             nextButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
             nextButton.widthAnchor.constraint(equalToConstant: 110)
@@ -207,11 +214,17 @@ public final class OnboardingViewController: NSViewController {
         progressIndicator.doubleValue = Double(currentStep + 1)
 
         backButton.isEnabled = currentStep > 0
+        actionButton.title = step.button ?? ""
+        actionButton.isHidden = step.button == nil
         if currentStep == totalSteps - 1 {
             nextButton.title = "Get Started"
         } else {
             nextButton.title = "Continue"
         }
+    }
+
+    @objc private func actionClicked(_ sender: NSButton) {
+        AddDeviceWindowController.shared.show()
     }
 
     @objc private func backClicked(_ sender: NSButton) {
