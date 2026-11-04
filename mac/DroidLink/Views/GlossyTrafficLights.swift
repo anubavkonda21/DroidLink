@@ -4,7 +4,7 @@
 //
 //  AJ's choice: the window's close / minimize / zoom buttons match AJ's reference
 //  screenshot: solid red, yellow, green balls that lighten toward the bottom, with a thin bright rim.
-//  The system buttons stay in place but hidden; our buttons sit on top of the
+//  The system buttons stay in place but invisible (alpha 0); our buttons sit on top of the
 //  same spots and call the same window actions.
 //
 
@@ -77,12 +77,17 @@ final class GlossyButtonGroup: NSView {
     var isHovering: Bool { hovering }
     var windowIsActive: Bool { targetWindow?.isKeyWindow == true || targetWindow?.isMainWindow == true }
 
-    /// Match the system buttons' spots and keep the system ones hidden.
+    /// Match the system buttons' spots and keep the system ones invisible.
     func relayout() {
-        guard superview != nil else { return }
+        guard let host = superview else { return }
+        // Stay on top so clicks reach us, not the invisible system buttons underneath.
+        // Re-adding calls viewDidMoveToSuperview -> relayout once more, but then we're last, so it stops.
+        if host.subviews.last !== self { host.addSubview(self, positioned: .above, relativeTo: nil); return }
         var union = NSRect.null
         for b in buttons {
-            b.system.isHidden = true
+            // Not isHidden: hiding them makes AppKit slide the window title into their space.
+            b.system.isHidden = false
+            b.system.alphaValue = 0
             union = union.union(b.system.frame)
         }
         guard !union.isNull else { return }
