@@ -249,7 +249,8 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
            let textResponse = response as? UNTextInputNotificationResponse {
             let replyText = textResponse.userText
             sendReply(notificationId: notificationId, replyText: replyText)
-        } else if response.actionIdentifier == dismissActionId {
+        } else if response.actionIdentifier == dismissActionId
+                    || response.actionIdentifier == UNNotificationDismissActionIdentifier {
             dismissNotification(id: notificationId)
         }
 
@@ -283,7 +284,9 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
         }
     }
 
+    /// Clears everything on the Mac and the matching notifications on the phone.
     public func clearAll() {
+        notifications.forEach { onDismiss?(NotificationDismissPayload(notificationId: $0.id)) }
         if isNotificationCenterAvailable {
             UNUserNotificationCenter.current().removeAllDeliveredNotifications()
         }
