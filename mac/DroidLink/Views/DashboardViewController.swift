@@ -591,12 +591,13 @@ public final class DashboardViewController: NSViewController {
         button.needsDisplay = true
     }
 
-    /// (title, `cmd notification set_dnd` argument, matching `zen_mode` value)
-    private let dndModes: [(String, String, String)] = [
-        ("Off", "off", "0"),
-        ("Priority only", "priority", "1"),
-        ("Alarms only", "alarms", "3"),
-        ("Total silence", "none", "2")
+    /// (title, `cmd notification set_dnd` argument, matching `zen_mode` value, what gets through)
+    /// The phone shows the same moon icon for every mode; only what is let through differs.
+    private let dndModes: [(String, String, String, String)] = [
+        ("Off", "off", "0", "Everything rings as normal"),
+        ("Priority only", "priority", "1", "Alarms, media and important chats get through"),
+        ("Alarms only", "alarms", "3", "Only alarms and media make sound"),
+        ("Total silence", "none", "2", "Nothing makes sound, not even alarms")
     ]
 
     /// Shows the phone's Do Not Disturb modes, with the current one ticked.
@@ -612,6 +613,7 @@ public final class DashboardViewController: NSViewController {
                     item.target = self
                     item.tag = i
                     item.state = mode.2 == current ? .on : .off
+                    if #available(macOS 14.4, *) { item.subtitle = mode.3 } else { item.toolTip = mode.3 }
                     menu.addItem(item)
                 }
                 menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
@@ -622,11 +624,16 @@ public final class DashboardViewController: NSViewController {
     @objc private func dndModeChosen(_ item: NSMenuItem) {
         let mode = dndModes[item.tag]
         Task {
-            let ok = (try? await connectionManager.adbService.executeADB(["shell", "cmd", "notification", "set_dnd", mode.1])) != nil
-            if !ok {
+            let adb = connectionManager.adbService
+            _ = try? await adb.executeADB(["shell", "cmd", "notification", "set_dnd", mode.1])
+            // Read it back so a phone that ignores the request isn't reported as done
+            let now = (try? await adb.executeADB(["shell", "settings", "get", "global", "zen_mode"]))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if now != mode.2 {
                 await MainActor.run {
                     let alert = NSAlert()
                     alert.messageText = "Couldn't change Do Not Disturb"
+                    alert.informativeText = "The phone didn't switch to \(mode.0)."
                     alert.runModal()
                 }
             }
