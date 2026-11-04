@@ -3,15 +3,12 @@
  * Copyright (c) 2026 DroidLink Project. All rights reserved.
  *
  * Main entry activity handling Jetpack Compose UI, runtime permissions flow,
- * MediaProjection screen capture consent, and deep link routing.
+ * and deep link routing.
  */
 
 package com.droidlink.companion
 
-import android.app.Activity
-import android.content.Context
 import android.content.Intent
-import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -26,12 +23,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.droidlink.companion.models.MirrorConfig
 import com.droidlink.companion.services.CallBridgeService
 import com.droidlink.companion.services.ClipboardService
 import com.droidlink.companion.services.ConnectionService
 import com.droidlink.companion.services.FileServerService
-import com.droidlink.companion.services.ScreenCaptureService
 import com.droidlink.companion.ui.navigation.DroidLinkApp
 import com.droidlink.companion.ui.theme.DroidLinkTheme
 import com.droidlink.companion.utils.Constants
@@ -42,31 +37,7 @@ import com.droidlink.companion.utils.PermissionHelper
  */
 class MainActivity : ComponentActivity() {
 
-    private lateinit var projectionManager: MediaProjectionManager
     private var showNotificationAccessDialog by mutableStateOf(false)
-
-    // MediaProjection permission launcher
-    private val screenCaptureLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            Log.i(TAG, "MediaProjection permission granted. Starting ScreenCaptureService.")
-            val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
-                action = Constants.ACTION_START_SCREEN_CAPTURE
-                putExtra(Constants.EXTRA_MEDIA_PROJECTION_RESULT_CODE, result.resultCode)
-                putExtra(Constants.EXTRA_MEDIA_PROJECTION_DATA, result.data)
-                putExtra(Constants.EXTRA_MIRROR_CONFIG, MirrorConfig.HD_1080P_60FPS)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
-            }
-        } else {
-            Log.w(TAG, "MediaProjection permission denied by user.")
-            Toast.makeText(this, "Screen capture permission denied", Toast.LENGTH_SHORT).show()
-        }
-    }
 
     // Dangerous runtime permissions launcher
     private val runtimePermissionsLauncher = registerForActivityResult(
@@ -83,14 +54,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         // Start fundamental background companion services
         startCoreServices()
 
         // Handle initial incoming deep link if present
         handleDeepLink(intent)
-        if (intent?.action == ACTION_START_MIRRORING) requestScreenCapture()
 
         // Request necessary runtime permissions
         requestAppPermissions()
@@ -98,7 +67,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             DroidLinkTheme {
                 DroidLinkApp(
-                    onRequestScreenCapture = { requestScreenCapture() },
                     onRequestPermissions = { requestAppPermissions() }
                 )
 
@@ -134,15 +102,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleDeepLink(intent)
-        if (intent.action == ACTION_START_MIRRORING) requestScreenCapture()
-    }
-
-    /**
-     * Launches system prompt requesting user authorization for screen recording.
-     */
-    fun requestScreenCapture() {
-        val captureIntent = projectionManager.createScreenCaptureIntent()
-        screenCaptureLauncher.launch(captureIntent)
     }
 
     /**
@@ -200,6 +159,5 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
-        const val ACTION_START_MIRRORING = "com.droidlink.companion.action.START_MIRRORING_PROMPT"
     }
 }

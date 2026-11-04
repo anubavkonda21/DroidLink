@@ -55,7 +55,6 @@ sealed class NavDestination(
 @Composable
 fun DroidLinkApp(
     navController: NavHostController = rememberNavController(),
-    onRequestScreenCapture: () -> Unit,
     onRequestPermissions: () -> Unit
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -98,7 +97,6 @@ fun DroidLinkApp(
         ) {
             composable(NavDestination.Home.route) {
                 HomeScreen(
-                    onRequestScreenCapture = onRequestScreenCapture,
                     onRequestPermissions = onRequestPermissions
                 )
             }

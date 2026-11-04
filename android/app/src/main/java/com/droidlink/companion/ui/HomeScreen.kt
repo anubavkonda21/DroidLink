@@ -111,7 +111,6 @@ import com.droidlink.companion.models.ConnectionState
 import com.droidlink.companion.services.ClipboardService
 import com.droidlink.companion.services.ConnectionService
 import com.droidlink.companion.services.FileServerService
-import com.droidlink.companion.services.ScreenCaptureService
 import com.droidlink.companion.utils.Constants
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -127,7 +126,6 @@ data class ActivityLogItem(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
-    onRequestScreenCapture: () -> Unit,
     onRequestPermissions: () -> Unit
 ) {
     val context = LocalContext.current
@@ -296,34 +294,6 @@ fun HomeScreen(
                             Text("Disconnect", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         }
 
-                        // Mirroring Toggle Button
-                        if (ScreenCaptureService.isRunning) {
-                            OutlinedButton(
-                                onClick = {
-                                    val stopIntent = Intent(context, ScreenCaptureService::class.java).apply {
-                                        action = Constants.ACTION_STOP_SCREEN_CAPTURE
-                                    }
-                                    context.startService(stopIntent)
-                                    activityLogs.add(0, ActivityLogItem(title = "Mirroring Stopped", description = "User ended stream"))
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("Stop Mirror")
-                            }
-                        } else {
-                            Button(
-                                onClick = {
-                                    onRequestScreenCapture()
-                                    activityLogs.add(0, ActivityLogItem(title = "Mirror Requested", description = "Starting projection flow"))
-                                },
-                                contentPadding = PaddingValues(horizontal = 12.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.Cast, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Mirror Screen", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            }
-                        }
                     } else {
                         Button(
                             onClick = { showManualIpDialog = true },
@@ -339,6 +309,7 @@ fun HomeScreen(
                                 // Pairing uses Android's own scanner: Wireless debugging › Pair device with QR code.
                                 val devOptions = Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
                                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    .putExtra(":settings:fragment_args_key", "toggle_adb_wireless")  // scrolls to and highlights Wireless debugging
                                 try {
                                     context.startActivity(devOptions)
                                     Toast.makeText(context, "Open Wireless debugging, then tap \"Pair device with QR code\" and scan the code on your Mac.", Toast.LENGTH_LONG).show()
