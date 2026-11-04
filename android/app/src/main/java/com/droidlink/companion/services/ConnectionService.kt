@@ -27,6 +27,7 @@ import com.droidlink.companion.MainActivity
 import com.droidlink.companion.models.ConnectionState
 import com.droidlink.companion.models.ProtocolMessage
 import com.droidlink.companion.utils.Constants
+import com.droidlink.companion.utils.Features
 import com.droidlink.companion.utils.DeviceInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -278,7 +279,7 @@ class ConnectionService : Service() {
                 val rtt = System.currentTimeMillis() - (msg.timestamp * 1000).toLong()
                 _latencyMs.value = rtt.coerceAtLeast(0L)
             }
-            "clipboard_sync" -> p?.str("text")?.let { ClipboardService.applyRemoteClip(it) }
+            "clipboard_sync" -> if (Features.isOn(this, Features.CLIPBOARD)) p?.str("text")?.let { ClipboardService.applyRemoteClip(it) }
             "notification_reply" -> {
                 val key = p?.str("notificationId") ?: return
                 NotificationListenerService.replyToNotification(key, p.str("replyText") ?: "")
@@ -483,7 +484,10 @@ class ConnectionService : Service() {
          * Global entry point for other services (Notifications, Clipboard, Calls) to broadcast messages.
          */
         fun broadcastProtocolMessage(message: ProtocolMessage) {
-            instance?.sendProtocolMessage(message)
+            val service = instance ?: return
+            // features switched off on the Status screen send nothing to the Mac
+            Features.keyFor(message)?.let { if (!Features.isOn(service, it)) return }
+            service.sendProtocolMessage(message)
         }
 
         fun updateState(state: ConnectionState) {

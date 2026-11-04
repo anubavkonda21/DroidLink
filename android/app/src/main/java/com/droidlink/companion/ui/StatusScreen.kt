@@ -35,6 +35,13 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
+import com.droidlink.companion.utils.Features
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -52,14 +59,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.droidlink.companion.services.ClipboardService
 import com.droidlink.companion.services.ConnectionService
-import com.droidlink.companion.services.FileServerService
 import com.droidlink.companion.services.NotificationListenerService
 import com.droidlink.companion.ui.theme.Accents
 import com.droidlink.companion.utils.DeviceInfo
 
-/** Live status of the link and of each feature. Only real readings; nothing here is a toggle. */
+/** Live status of the link and of each feature. Only real readings; the switches stop or allow each kind of data. */
 @Composable
 fun StatusScreen() {
     val context = LocalContext.current
@@ -130,13 +135,40 @@ fun StatusScreen() {
         Spacer(Modifier.height(10.dp))
 
         FeatureRow(Icons.Default.NotificationsActive, Accents.Pink, "Notifications",
-            "Phone notifications on the Mac", NotificationListenerService.instance != null)
+            if (NotificationListenerService.instance != null) "Phone notifications on the Mac" else "Needs notification access",
+            Features.NOTIFICATIONS)
         FeatureRow(Icons.Default.ContentPaste, Accents.Orange, "Clipboard",
-            "Copy on one, paste on the other", ClipboardService.instance != null)
+            "Copy on one, paste on the other", Features.CLIPBOARD)
         FeatureRow(Icons.Default.CloudDownload, Accents.Blue, "File transfer",
-            "Send files both ways", FileServerService.instance != null)
+            "Send files to the Mac", Features.FILES)
         FeatureRow(Icons.Default.Call, Accents.Green, "Calls",
-            "Caller ID on the Mac", connectionState.isConnected)
+            "Caller ID on the Mac", Features.CALLS)
+
+        Spacer(Modifier.height(16.dp))
+        // Android only lets the user revoke permissions, so link straight to this app's system page
+        Card(
+            onClick = {
+                context.startActivity(
+                    android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.fromParts("package", context.packageName, null))
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconBubble(Icons.Default.Security, Accents.Teal)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Phone permissions", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                    Text("Turn off camera, SMS, contacts and more in Android settings",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 
@@ -174,8 +206,11 @@ private fun Metric(icon: ImageVector, color: Color, title: String, value: String
     }
 }
 
+/** A feature with a real on/off switch: off stops that data going to (and coming from) the Mac. */
 @Composable
-private fun FeatureRow(icon: ImageVector, color: Color, title: String, subtitle: String, isOn: Boolean) {
+private fun FeatureRow(icon: ImageVector, color: Color, title: String, subtitle: String, featureKey: String) {
+    val context = LocalContext.current
+    var isOn by remember { mutableStateOf(Features.isOn(context, featureKey)) }
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         shape = RoundedCornerShape(16.dp),
@@ -186,17 +221,13 @@ private fun FeatureRow(icon: ImageVector, color: Color, title: String, subtitle:
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (isOn) subtitle else "Off: nothing is shared", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            // status pill instead of a switch: these can't be turned off from here
-            Text(
-                if (isOn) "On" else "Off",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isOn) color else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.clip(RoundedCornerShape(50))
-                    .background((if (isOn) color else Color.Gray).copy(alpha = 0.15f))
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            Switch(
+                checked = isOn,
+                onCheckedChange = { isOn = it; Features.set(context, featureKey, it) },
+                colors = SwitchDefaults.colors(checkedTrackColor = color, checkedThumbColor = Color.White)
             )
         }
     }

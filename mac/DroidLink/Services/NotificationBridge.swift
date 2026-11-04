@@ -194,6 +194,15 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
             content.sound = .default
         }
 
+        // Show the Android app's own icon (sent by the phone as base64 PNG) as the banner thumbnail
+        if let b64 = notification.appIcon, let png = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("droidlink-icon-\(UUID().uuidString).png")
+            if (try? png.write(to: url)) != nil,
+               let attachment = try? UNNotificationAttachment(identifier: "appIcon", url: url) {
+                content.attachments = [attachment] // the system moves the file into its own store
+            }
+        }
+
         let request = UNNotificationRequest(
             identifier: notification.id,
             content: content,
