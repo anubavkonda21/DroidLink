@@ -4,14 +4,16 @@
 //
 //  AJ's choice: the window's close / minimize / zoom buttons match AJ's reference
 //  screenshot: solid red, yellow, green balls that lighten toward the bottom, with a thin bright rim.
-//  The system buttons stay in place but invisible (alpha 0); our buttons sit on top of the
-//  same spots and call the same window actions.
+//  Each glossy ball is drawn as a subview inside macOS's own button, so it always sits
+//  exactly where macOS puts the button and the window title layout never changes.
 //
 
 import AppKit
+import ObjectiveC
 
 enum GlossyTrafficLights {
     private static var observer: NSObjectProtocol?
+    private static var key: UInt8 = 0
 
     /// Restyle every normal window as it appears. Call once at launch.
     static func installEverywhere() {
@@ -29,103 +31,65 @@ enum GlossyTrafficLights {
     static func install(on window: NSWindow) {
         guard !(window is NSPanel),               // open/save panels and floating bars keep their own look
               window.styleMask.contains(.titled),
-              let close = window.standardWindowButton(.closeButton),
-              let host = close.superview,
-              !host.subviews.contains(where: { $0 is GlossyButtonGroup })
+              window.standardWindowButton(.closeButton) != nil,
+              objc_getAssociatedObject(window, &key) == nil
         else { return }
-        host.addSubview(GlossyButtonGroup(window: window))
+        objc_setAssociatedObject(window, &key, GlossyButtonGroup(window: window), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
 }
 
-/// Holds the three glossy buttons and keeps them over the hidden system ones.
-final class GlossyButtonGroup: NSView {
+/// Shared state for one window's three balls (hover, active/inactive).
+final class GlossyButtonGroup: NSObject {
     private weak var targetWindow: NSWindow?
     private var buttons: [GlossyWindowButton] = []
     private var tokens: [NSObjectProtocol] = []
-    private var hovering = false { didSet { buttons.forEach { $0.needsDisplay = true } } }
+    private var hoverCount = 0
 
     init(window: NSWindow) {
         targetWindow = window
-        super.init(frame: .zero)
+        super.init()
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             guard let sys = window.standardWindowButton(kind) else { continue }
             let b = GlossyWindowButton(kind: kind, system: sys, group: self)
+            b.frame = sys.bounds
+            b.autoresizingMask = [.width, .height]
+            sys.addSubview(b)
             buttons.append(b)
-            addSubview(b)
-            sys.postsFrameChangedNotifications = true
-            tokens.append(NotificationCenter.default.addObserver(
-                forName: NSView.frameDidChangeNotification, object: sys, queue: .main
-            ) { [weak self] _ in self?.relayout() })
         }
-        let redraw: (Notification) -> Void = { [weak self] _ in
-            self?.relayout()
-            self?.buttons.forEach { $0.needsDisplay = true }
-        }
+        let redraw: (Notification) -> Void = { [weak self] _ in self?.redraw() }
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
                      NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification,
-                     NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
-                     NSWindow.didResizeNotification] {
+                     NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
             tokens.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main, using: redraw))
         }
-        relayout()
     }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     deinit { tokens.forEach { NotificationCenter.default.removeObserver($0) } }
 
-    var isHovering: Bool { hovering }
+    var isHovering: Bool { hoverCount > 0 }
     var windowIsActive: Bool { targetWindow?.isKeyWindow == true || targetWindow?.isMainWindow == true }
 
-    /// Match the system buttons' spots and keep the system ones invisible.
-    func relayout() {
-        guard let host = superview else { return }
-        // Stay on top so clicks reach us, not the invisible system buttons underneath.
-        // Re-adding calls viewDidMoveToSuperview -> relayout once more, but then we're last, so it stops.
-        if host.subviews.last !== self { host.addSubview(self, positioned: .above, relativeTo: nil); return }
-        var union = NSRect.null
-        for b in buttons {
-            // Not isHidden: hiding them makes AppKit slide the window title into their space.
-            b.system.isHidden = false
-            b.system.alphaValue = 0
-            union = union.union(b.system.frame)
-        }
-        guard !union.isNull else { return }
-        frame = union
-        for b in buttons {
-            let f = b.system.frame
-            b.frame = NSRect(x: f.minX - union.minX, y: f.minY - union.minY, width: f.width, height: f.height)
-        }
+    func hoverChanged(_ entered: Bool) {
+        hoverCount = max(0, hoverCount + (entered ? 1 : -1))
+        redraw()
     }
 
-    override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        relayout()
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                       owner: self, userInfo: nil))
-    }
-
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
+    func redraw() { buttons.forEach { $0.needsDisplay = true } }
 }
 
-/// One glossy ball.
+/// One glossy ball, sitting inside (and covering) macOS's own button.
 final class GlossyWindowButton: NSView {
     let kind: NSWindow.ButtonType
     let system: NSButton
     private unowned let group: GlossyButtonGroup
     private var pressed = false { didSet { needsDisplay = true } }
+    private var inside = false
 
     init(kind: NSWindow.ButtonType, system: NSButton, group: GlossyButtonGroup) {
         self.kind = kind
         self.system = system
         self.group = group
-        super.init(frame: system.frame)
+        super.init(frame: system.bounds)
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel(kind == .closeButton ? "Close" : kind == .miniaturizeButton ? "Minimize" : "Zoom")
@@ -137,6 +101,27 @@ final class GlossyWindowButton: NSView {
     override var isFlipped: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func accessibilityPerformPress() -> Bool { perform(); return true }
+
+    // MARK: Hover
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard !inside else { return }
+        inside = true
+        group.hoverChanged(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard inside else { return }
+        inside = false
+        group.hoverChanged(false)
+    }
 
     // MARK: Clicks
 
@@ -152,9 +137,9 @@ final class GlossyWindowButton: NSView {
 
     override func mouseUp(with event: NSEvent) {
         guard system.isEnabled else { return }
-        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        let hit = bounds.contains(convert(event.locationInWindow, from: nil))
         pressed = false
-        if inside { perform(option: event.modifierFlags.contains(.option)) }
+        if hit { perform(option: event.modifierFlags.contains(.option)) }
     }
 
     private func perform(option: Bool = false) {
