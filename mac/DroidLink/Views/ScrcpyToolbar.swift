@@ -94,6 +94,10 @@ final class ScrcpyToolbar: NSObject {
             ("chevron.backward", "Back", ["input", "keyevent", "KEYCODE_BACK"]),
             ("circle", "Home", ["input", "keyevent", "KEYCODE_HOME"]),
             ("square.stack.3d.down.right", "Recent apps", ["input", "keyevent", "KEYCODE_APP_SWITCH"]),
+            // Swipe up from the bottom edge (gesture nav: home / app switcher), sized to this phone's screen.
+            // adb rejoins the words with spaces, so the phone's shell sees this one script.
+            ("chevron.compact.up", "Swipe up", ["s=$(wm size | tail -1 | cut -d: -f2);", "w=${s%x*};", "h=${s#*x};",
+                                                "input", "swipe", "$((w/2))", "$((h-10))", "$((w/2))", "$((h/3))", "250"]),
             ("bell", "Notifications", ["cmd", "statusbar", "expand-notifications"]),
             ("", "", []),
             ("speaker.wave.1", "Volume Down", ["input", "keyevent", "KEYCODE_VOLUME_DOWN"]),
