@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
@@ -386,6 +387,22 @@ fun HomeScreen(
                 label = "Send Photo",
                 icon = Icons.Default.Image,
                 color = Accents.Pink
+            )
+
+            QuickActionTile(
+                onClick = {
+                    // Tailscale links the phone and Mac when they're on different networks
+                    val launch = context.packageManager.getLaunchIntentForPackage("com.tailscale.ipn")
+                        ?: Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=com.tailscale.ipn"))
+                    try {
+                        context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } catch (e: android.content.ActivityNotFoundException) {
+                        Toast.makeText(context, "Install Tailscale from the Play Store", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                label = "Tailscale",
+                icon = Icons.Default.VpnKey,
+                color = Accents.Green
             )
         }
 

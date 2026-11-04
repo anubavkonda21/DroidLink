@@ -226,6 +226,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(devicesMenuItem())
         menu.addItem(withTitle: "Add Phone with QR Code…", action: #selector(addDevice(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Open Tailscale", action: #selector(openTailscale(_:)), keyEquivalent: "")
 
         menu.addItem(.separator())
         let camItem = NSMenuItem(title: "Use Phone as Webcam", action: #selector(toggleWebcam(_:)), keyEquivalent: "")
@@ -239,6 +240,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Quit DroidLink", action: #selector(quitApp(_:)), keyEquivalent: "q")
 
         item.menu = menu
+    }
+
+    /// Tailscale links the Mac and phone when they're on different networks.
+    @objc private func openTailscale(_ sender: Any?) {
+        let ids = ["io.tailscale.ipn.macos", "io.tailscale.ipn.macsys"]  // App Store, standalone
+        if let url = ids.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        } else if let url = URL(string: "https://tailscale.com/download/mac") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     @objc private func connectionStateChanged(_ notif: Notification) {
