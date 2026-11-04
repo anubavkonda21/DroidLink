@@ -1,17 +1,21 @@
-// Renders the DroidLink app icon (Mac + phone linked, white on Apple blue) for both apps.
+// Renders the DroidLink app icon (bolt on a gradient squircle) for both apps.
 // Run from the repo root: swift tools/make_icons.swift
 import AppKit
 
-let blueTop = NSColor(srgbRed: 0x40 / 255.0, green: 0xA8 / 255.0, blue: 1, alpha: 1)
-let blueBottom = NSColor(srgbRed: 0x00 / 255.0, green: 0x6A / 255.0, blue: 0xE6 / 255.0, alpha: 1)
+// Palette (AJ picks): change these three + android/.../drawable/ic_launcher_background.xml, then rerun.
+func hex(_ h: Int) -> NSColor { NSColor(srgbRed: CGFloat(h >> 16 & 255) / 255, green: CGFloat(h >> 8 & 255) / 255, blue: CGFloat(h & 255) / 255, alpha: 1) }
+let blueTop = hex(0xA8F0D1)     // mint
+let blueBottom = hex(0x5CD6A3)
+let glyphColor = hex(0x0B3D2E)  // dark green bolt
+let symbolName = "bolt.horizontal.fill"
 
 /// White outline glyph: draw the template symbol, then recolour only its opaque pixels white.
 func glyph(size: CGFloat) -> NSImage {
-    let symbol = NSImage(systemSymbolName: "laptopcomputer.and.iphone", accessibilityDescription: nil)!
-        .withSymbolConfiguration(.init(pointSize: size, weight: .medium))!
+    let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)!
+        .withSymbolConfiguration(.init(pointSize: size, weight: .semibold))!
     return NSImage(size: symbol.size, flipped: false) { rect in
         symbol.draw(in: rect)
-        NSColor.white.set()
+        glyphColor.set()
         rect.fill(using: .sourceAtop)
         return true
     }
@@ -51,15 +55,15 @@ let iconset = NSTemporaryDirectory() + "AppIcon.iconset"
 try? fm.removeItem(atPath: iconset)
 try! fm.createDirectory(atPath: iconset, withIntermediateDirectories: true)
 for base in [16, 32, 128, 256, 512] {
-    render(base, shape: .squircle, glyphScale: 0.33, to: "\(iconset)/icon_\(base)x\(base).png")
-    render(base * 2, shape: .squircle, glyphScale: 0.33, to: "\(iconset)/icon_\(base)x\(base)@2x.png")
+    render(base, shape: .squircle, glyphScale: 0.26, to: "\(iconset)/icon_\(base)x\(base).png")
+    render(base * 2, shape: .squircle, glyphScale: 0.26, to: "\(iconset)/icon_\(base)x\(base)@2x.png")
 }
 let p = Process()
 p.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 p.arguments = ["-c", "icns", iconset, "-o", "mac/DroidLink/AppIcon.icns"]
 try! p.run(); p.waitUntilExit()
 precondition(p.terminationStatus == 0, "iconutil failed")
-render(1024, shape: .squircle, glyphScale: 0.33, to: "docs/icon.png")
+render(1024, shape: .squircle, glyphScale: 0.26, to: "docs/icon.png")
 
 // Android: adaptive foreground (glyph inside the 66% safe zone) + legacy round-ish icon per density
 let res = "android/app/src/main/res"
@@ -67,7 +71,7 @@ for (dir, scale) in [("mdpi", 1.0), ("hdpi", 1.5), ("xhdpi", 2.0), ("xxhdpi", 3.
     let folder = "\(res)/mipmap-\(dir)"
     try! fm.createDirectory(atPath: folder, withIntermediateDirectories: true)
     render(Int(108 * scale), shape: nil, glyphScale: 0.22, to: "\(folder)/ic_launcher_foreground.png")
-    render(Int(48 * scale), shape: .circle, glyphScale: 0.33, to: "\(folder)/ic_launcher.png")
-    render(Int(48 * scale), shape: .circle, glyphScale: 0.33, to: "\(folder)/ic_launcher_round.png")
+    render(Int(48 * scale), shape: .circle, glyphScale: 0.26, to: "\(folder)/ic_launcher.png")
+    render(Int(48 * scale), shape: .circle, glyphScale: 0.26, to: "\(folder)/ic_launcher_round.png")
 }
 print("icons written")
