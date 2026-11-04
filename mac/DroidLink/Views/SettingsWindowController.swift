@@ -158,8 +158,8 @@ public final class MirrorSettingsViewController: NSViewController {
     private var codecPopUp: NSPopUpButton!
     private var bitrateSlider: NSSlider!
     private var bitrateLabel: NSTextField!
-    private var audioCheckBox: NSButton!
-    private var screenOffCheckBox: NSButton!
+    private var audioCheckBox: NSSwitch!
+    private var screenOffCheckBox: NSSwitch!
 
     public override func loadView() {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 350))
@@ -235,15 +235,19 @@ public final class MirrorSettingsViewController: NSViewController {
         // Audio
         let savedAudio = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.audioEnabled) != nil ?
             UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.audioEnabled) : true
-        audioCheckBox = NSButton(checkboxWithTitle: "Stream Android audio to Mac speakers", target: self, action: #selector(audioToggled(_:)))
+        audioCheckBox = NSSwitch()
+        audioCheckBox.target = self
+        audioCheckBox.action = #selector(audioToggled(_:))
         audioCheckBox.state = savedAudio ? .on : .off
-        stack.addArrangedSubview(audioCheckBox)
+        stack.addArrangedSubview(switchRow("Stream Android audio to Mac speakers", audioCheckBox))
 
         // Screen Off
         let savedScreenOff = UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.turnScreenOff)
-        screenOffCheckBox = NSButton(checkboxWithTitle: "Turn off device screen while mirroring", target: self, action: #selector(screenOffToggled(_:)))
+        screenOffCheckBox = NSSwitch()
+        screenOffCheckBox.target = self
+        screenOffCheckBox.action = #selector(screenOffToggled(_:))
         screenOffCheckBox.state = savedScreenOff ? .on : .off
-        stack.addArrangedSubview(screenOffCheckBox)
+        stack.addArrangedSubview(switchRow("Turn off device screen while mirroring", screenOffCheckBox))
     }
 
     @objc private func resolutionChanged(_ sender: NSPopUpButton) {
@@ -268,11 +272,11 @@ public final class MirrorSettingsViewController: NSViewController {
         UserDefaults.standard.set(sender.doubleValue, forKey: MirrorSettings.StorageKeys.bitrateMbps)
     }
 
-    @objc private func audioToggled(_ sender: NSButton) {
+    @objc private func audioToggled(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.audioEnabled)
     }
 
-    @objc private func screenOffToggled(_ sender: NSButton) {
+    @objc private func screenOffToggled(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.turnScreenOff)
     }
 }
@@ -280,8 +284,8 @@ public final class MirrorSettingsViewController: NSViewController {
 // MARK: - Clipboard Settings Tab
 
 public final class ClipboardSettingsViewController: NSViewController {
-    private var syncCheckBox: NSButton!
-    private var otpCheckBox: NSButton!
+    private var syncCheckBox: NSSwitch!
+    private var otpCheckBox: NSSwitch!
 
     public override func loadView() {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
@@ -302,22 +306,26 @@ public final class ClipboardSettingsViewController: NSViewController {
 
         let savedSync = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.autoSyncClipboard) != nil ?
             UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.autoSyncClipboard) : true
-        syncCheckBox = NSButton(checkboxWithTitle: "Automatically synchronize clipboard with Android", target: self, action: #selector(syncToggled(_:)))
+        syncCheckBox = NSSwitch()
+        syncCheckBox.target = self
+        syncCheckBox.action = #selector(syncToggled(_:))
         syncCheckBox.state = savedSync ? .on : .off
-        stack.addArrangedSubview(syncCheckBox)
+        stack.addArrangedSubview(switchRow("Automatically synchronize clipboard with Android", syncCheckBox))
 
         let savedOtp = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.otpAutoForward) != nil ?
             UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.otpAutoForward) : true
-        otpCheckBox = NSButton(checkboxWithTitle: "Automatically detect and forward SMS verification codes (OTP)", target: self, action: #selector(otpToggled(_:)))
+        otpCheckBox = NSSwitch()
+        otpCheckBox.target = self
+        otpCheckBox.action = #selector(otpToggled(_:))
         otpCheckBox.state = savedOtp ? .on : .off
-        stack.addArrangedSubview(otpCheckBox)
+        stack.addArrangedSubview(switchRow("Automatically detect and forward SMS verification codes (OTP)", otpCheckBox))
     }
 
-    @objc private func syncToggled(_ sender: NSButton) {
+    @objc private func syncToggled(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.autoSyncClipboard)
     }
 
-    @objc private func otpToggled(_ sender: NSButton) {
+    @objc private func otpToggled(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.otpAutoForward)
     }
 }
@@ -325,9 +333,9 @@ public final class ClipboardSettingsViewController: NSViewController {
 // MARK: - Notification Settings Tab
 
 public final class NotificationSettingsViewController: NSViewController {
-    private var notifCheckBox: NSButton!
-    private var soundCheckBox: NSButton!
-    private var dndCheckBox: NSButton!
+    private var notifCheckBox: NSSwitch!
+    private var soundCheckBox: NSSwitch!
+    private var dndCheckBox: NSSwitch!
     private let appListStack = NSStackView()
     private var bridge: NotificationBridge { .shared }
 
@@ -352,21 +360,27 @@ public final class NotificationSettingsViewController: NSViewController {
 
         let savedNotif = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.enableNotifications) != nil ?
             UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.enableNotifications) : true
-        notifCheckBox = NSButton(checkboxWithTitle: "Bridge Android notifications to macOS Notification Center", target: self, action: #selector(notifToggled(_:)))
+        notifCheckBox = NSSwitch()
+        notifCheckBox.target = self
+        notifCheckBox.action = #selector(notifToggled(_:))
         notifCheckBox.state = savedNotif ? .on : .off
-        stack.addArrangedSubview(notifCheckBox)
+        stack.addArrangedSubview(switchRow("Bridge Android notifications to macOS Notification Center", notifCheckBox))
 
         let savedSound = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.notificationSound) != nil ?
             UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.notificationSound) : true
-        soundCheckBox = NSButton(checkboxWithTitle: "Play sound for incoming notifications", target: self, action: #selector(soundToggled(_:)))
+        soundCheckBox = NSSwitch()
+        soundCheckBox.target = self
+        soundCheckBox.action = #selector(soundToggled(_:))
         soundCheckBox.state = savedSound ? .on : .off
-        stack.addArrangedSubview(soundCheckBox)
+        stack.addArrangedSubview(switchRow("Play sound for incoming notifications", soundCheckBox))
 
         let savedDnd = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.syncDnd) != nil ?
             UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.syncDnd) : true
-        dndCheckBox = NSButton(checkboxWithTitle: "Sync Do Not Disturb / Focus mode", target: self, action: #selector(dndToggled(_:)))
+        dndCheckBox = NSSwitch()
+        dndCheckBox.target = self
+        dndCheckBox.action = #selector(dndToggled(_:))
         dndCheckBox.state = savedDnd ? .on : .off
-        stack.addArrangedSubview(dndCheckBox)
+        stack.addArrangedSubview(switchRow("Sync Do Not Disturb / Focus mode", dndCheckBox))
 
         // Per-app on/off list
         let headerRow = NSStackView()
@@ -459,15 +473,15 @@ public final class NotificationSettingsViewController: NSViewController {
     @objc private func allOnClicked(_ sender: NSButton) { bridge.setAllApps(enabled: true) }
     @objc private func allOffClicked(_ sender: NSButton) { bridge.setAllApps(enabled: false) }
 
-    @objc private func notifToggled(_ sender: NSButton) {
+    @objc private func notifToggled(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.enableNotifications)
     }
 
-    @objc private func soundToggled(_ sender: NSButton) {
+    @objc private func soundToggled(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.notificationSound)
     }
 
-    @objc private func dndToggled(_ sender: NSButton) {
+    @objc private func dndToggled(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.syncDnd)
     }
 }
@@ -481,7 +495,7 @@ private final class FlippedClipView: NSClipView {
 
 public final class FileSettingsViewController: NSViewController {
     private var pathField: NSTextField!
-    private var organizeCheckBox: NSButton!
+    private var organizeCheckBox: NSSwitch!
 
     public override func loadView() {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
@@ -521,9 +535,11 @@ public final class FileSettingsViewController: NSViewController {
 
         let savedOrg = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.autoOrganizeFiles) != nil ?
             UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.autoOrganizeFiles) : true
-        organizeCheckBox = NSButton(checkboxWithTitle: "Automatically organize received files by type", target: self, action: #selector(organizeToggled(_:)))
+        organizeCheckBox = NSSwitch()
+        organizeCheckBox.target = self
+        organizeCheckBox.action = #selector(organizeToggled(_:))
         organizeCheckBox.state = savedOrg ? .on : .off
-        stack.addArrangedSubview(organizeCheckBox)
+        stack.addArrangedSubview(switchRow("Automatically organize received files by type", organizeCheckBox))
     }
 
     @objc private func browseClicked(_ sender: NSButton) {
@@ -537,7 +553,7 @@ public final class FileSettingsViewController: NSViewController {
         }
     }
 
-    @objc private func organizeToggled(_ sender: NSButton) {
+    @objc private func organizeToggled(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.autoOrganizeFiles)
     }
 }
@@ -590,4 +606,17 @@ public final class AboutSettingsViewController: NSViewController {
         copyrightLabel.textColor = .tertiaryLabelColor
         stack.addArrangedSubview(copyrightLabel)
     }
+}
+
+/// Apple-style settings row: label on the left, a native switch on the right.
+private func switchRow(_ title: String, _ toggle: NSSwitch) -> NSView {
+    let label = NSTextField(labelWithString: title)
+    label.lineBreakMode = .byWordWrapping
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    let row = NSStackView(views: [label, NSView(), toggle])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 12
+    row.widthAnchor.constraint(equalToConstant: 440).isActive = true // pane is 500 wide; switch sits at the right edge
+    return row
 }

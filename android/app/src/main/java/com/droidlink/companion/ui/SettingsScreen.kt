@@ -45,7 +45,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,6 +62,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.droidlink.companion.ui.theme.Accents
+import com.droidlink.companion.ui.theme.GlassSwitch
 import com.droidlink.companion.utils.Constants
 
 @Composable
@@ -324,7 +324,7 @@ private fun SettingsSwitchRow(title: String, subtitle: String, checked: Boolean,
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        GlassSwitch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

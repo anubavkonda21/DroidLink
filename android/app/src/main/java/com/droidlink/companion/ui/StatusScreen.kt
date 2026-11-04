@@ -40,8 +40,6 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Switch
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -62,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import com.droidlink.companion.services.ConnectionService
 import com.droidlink.companion.services.NotificationListenerService
 import com.droidlink.companion.ui.theme.Accents
+import com.droidlink.companion.ui.theme.GlassSwitch
 import com.droidlink.companion.utils.DeviceInfo
 
 /** Live status of the link and of each feature. Only real readings; the switches stop or allow each kind of data. */
@@ -224,10 +223,10 @@ private fun FeatureRow(icon: ImageVector, color: Color, title: String, subtitle:
                 Text(if (isOn) subtitle else "Off: nothing is shared", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Switch(
+            GlassSwitch(
                 checked = isOn,
                 onCheckedChange = { isOn = it; Features.set(context, featureKey, it) },
-                colors = SwitchDefaults.colors(checkedTrackColor = color, checkedThumbColor = Color.White)
+                onColor = color
             )
         }
     }
