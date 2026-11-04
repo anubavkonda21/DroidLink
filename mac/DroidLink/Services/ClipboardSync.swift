@@ -65,7 +65,7 @@ public final class ClipboardSync: @unchecked Sendable {
 
     // MARK: - Monitoring
 
-    public func startMonitoring(interval: TimeInterval = 0.3) {
+    public func startMonitoring(interval: TimeInterval = 0.5) {
         stopMonitoring()
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -73,6 +73,7 @@ public final class ClipboardSync: @unchecked Sendable {
             self.pasteboardTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 self?.checkPasteboardChange()
             }
+            self.pasteboardTimer?.tolerance = 0.2 // lets macOS batch wakeups with other timers
         }
     }
 

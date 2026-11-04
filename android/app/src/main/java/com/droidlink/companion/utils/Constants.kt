@@ -90,7 +90,7 @@ object Constants {
     const val MODE_USB = "USB"
 
     // Timing & Heartbeat
-    const val HEARTBEAT_INTERVAL_MS = 5000L
+    const val HEARTBEAT_INTERVAL_MS = 15000L // Mac sends its own heartbeat; slower pings let the Wi-Fi radio sleep
     const val HEARTBEAT_TIMEOUT_MS = 15000L
     const val CLIPBOARD_DEBOUNCE_MS = 800L
 }

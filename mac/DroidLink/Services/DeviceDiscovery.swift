@@ -179,6 +179,7 @@ public final class DeviceDiscovery: @unchecked Sendable {
             self.adbObserverTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
                 self?.pollAdbDevices()
             }
+            self.adbObserverTimer?.tolerance = 1
         }
     }
 

@@ -266,6 +266,7 @@ class ConnectionService : Service() {
                 Log.i(TAG, "Handshake from Mac: $macName")
                 _connectionState.value = ConnectionState.Connected(deviceName = macName, hostAddress = remoteHost)
                 updateForegroundNotification("Connected to $macName")
+                lastTelemetry = null // new Mac session gets a fresh status on the next tick
                 // no "tap to start mirroring" prompt: mirroring is started from the Mac's Mirror button (scrcpy)
                 if (ScreenCaptureService.isRunning) ScreenCaptureService.instance?.requestSyncFrame()
             }
@@ -375,8 +376,13 @@ class ConnectionService : Service() {
         }
     }
 
+    private var lastTelemetry: ProtocolMessage.DeviceStatus? = null
+
+    /** Only sends when something changed: battery/storage move slowly, so most ticks send nothing. */
     private fun sendDeviceTelemetry() {
         val telemetry = deviceInfo.getDeviceStatusMessage()
+        if (telemetry == lastTelemetry) return
+        lastTelemetry = telemetry
         sendProtocolMessage(telemetry)
     }
 

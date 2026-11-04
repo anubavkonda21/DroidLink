@@ -9,7 +9,7 @@ import AppKit
 import IOKit.ps
 
 /// Sent to the phone as `mac_status`.
-struct MacStatusPayload: Codable {
+struct MacStatusPayload: Codable, Equatable {
     var name: String
     var batteryLevel: Int?        // nil on a Mac without a battery
     var isCharging: Bool

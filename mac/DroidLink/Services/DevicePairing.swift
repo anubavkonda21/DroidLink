@@ -125,7 +125,7 @@ final class DevicePairing {
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             guard let self, let b = self.connectBrowser else { return }
             self.handleConnectResults(b.browseResults)
-        }
+        }.tolerance = 3
     }
 
     private func handleConnectResults(_ results: Set<NWBrowser.Result>) {

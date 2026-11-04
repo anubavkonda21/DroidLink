@@ -102,6 +102,7 @@ public final class ConnectionManager: @unchecked Sendable {
 
     private let networkQueue = DispatchQueue(label: "com.droidlink.connectionmanager.network", qos: .userInteractive)
     private var heartbeatTimer: Timer?
+    private var lastSentStatus: MacStatusPayload?
     private var reconnectAttempt = 0
 
     // Stream buffers
@@ -470,15 +471,24 @@ public final class ConnectionManager: @unchecked Sendable {
 
     private func startHeartbeat() {
         stopHeartbeat()
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        lastSentStatus = nil
+        // 15 s (was 5 s): each ping wakes the phone's Wi-Fi radio; TCP close still detects drops right away.
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             let envelope = ProtocolMessageEnvelope(type: .heartbeat)
             if let data = try? JSONEncoder().encode(envelope) {
                 let framed = ProtocolFramer.frame(data: data)
                 self.controlConnection?.send(content: framed, completion: .idempotent)
             }
-            self.sendControlMessage(type: .macStatus, payload: MacStatus.current())
+            // mac_status only when it changed (battery, volume, storage)
+            let status = MacStatus.current()
+            if status != self.lastSentStatus {
+                self.lastSentStatus = status
+                self.sendControlMessage(type: .macStatus, payload: status)
+            }
         }
+        heartbeatTimer?.tolerance = 3
+        heartbeatTimer?.fire() // phone's MacBook card fills in right away
     }
 
     private func stopHeartbeat() {

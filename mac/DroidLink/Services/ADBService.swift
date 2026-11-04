@@ -76,6 +76,7 @@ public final class ADBService: @unchecked Sendable {
     // MARK: - Private State
 
     private var scanTimer: Timer?
+    private var lastRefresh = Date.distantPast
     private let processQueue = DispatchQueue(label: "com.droidlink.adb.queue", qos: .userInitiated)
 
     /// Phone on another network: this script finds it over Tailscale (Wireless debugging only, never port 5555).
@@ -138,8 +139,13 @@ public final class ADBService: @unchecked Sendable {
             guard let self = self else { return }
             self.refreshDevices()
             self.scanTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-                self?.refreshDevices()
+                guard let self else { return }
+                // A phone is up: spawning `adb devices` every 3 s buys nothing, so check every 12 s instead.
+                if self.devices.contains(where: { $0.state == .device }),
+                   Date().timeIntervalSince(self.lastRefresh) < 12 { return }
+                self.refreshDevices()
             }
+            self.scanTimer?.tolerance = 1
         }
     }
 
@@ -153,6 +159,7 @@ public final class ADBService: @unchecked Sendable {
     public func refreshDevices() {
         guard isAdbAvailable, let adb = adbPath else { return }
         isScanning = true
+        lastRefresh = Date()
 
         processQueue.async { [weak self] in
             guard let self = self else { return }
