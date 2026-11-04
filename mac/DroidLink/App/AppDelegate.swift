@@ -27,6 +27,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMainMenu()
         setupMainWindow()
+        GlossyTrafficLights.installEverywhere()  // glossy Aqua-style close/minimize/zoom buttons
         setupStatusBarItem()
 
         // Locate ADB and start discovery
