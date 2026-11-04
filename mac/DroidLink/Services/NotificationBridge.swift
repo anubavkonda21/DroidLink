@@ -181,7 +181,14 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
     private func postMacSystemNotification(_ notification: AndroidNotification) {
         guard isNotificationCenterAvailable else { return }
         let content = UNMutableNotificationContent()
-        content.title = "\(notification.appName) — \(notification.title)"
+        // "WhatsApp" + sender as subtitle; avoid "WhatsApp — WhatsApp" when the title is just the app name
+        let title = notification.title.trimmingCharacters(in: .whitespaces)
+        if title.isEmpty || title == notification.appName {
+            content.title = notification.appName
+        } else {
+            content.title = title
+            content.subtitle = notification.appName
+        }
         content.body = notification.body
         content.categoryIdentifier = categoryId
         content.userInfo = [
