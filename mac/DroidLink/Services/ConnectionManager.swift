@@ -98,6 +98,7 @@ public final class ConnectionManager: @unchecked Sendable {
 
     private var controlConnection: NWConnection?
     private var videoConnection: NWConnection?
+    private var videoRetryDelay: TimeInterval = 2
     private var audioConnection: NWConnection?
 
     private let networkQueue = DispatchQueue(label: "com.droidlink.connectionmanager.network", qos: .userInteractive)
@@ -270,7 +271,7 @@ public final class ConnectionManager: @unchecked Sendable {
                     self.reconnectAttempt = 0
                     self.status = .mirroring(info)
                     self.startHeartbeat()
-                    self.audioPlayer.start()
+                    // audio engine starts on the first audio packet; an idle running engine keeps CoreAudio busy
                 }
                 self.receiveNextControlPacket()
                 self.sendHandshake()
@@ -289,6 +290,7 @@ public final class ConnectionManager: @unchecked Sendable {
         self.controlConnection = conn
 
         // Start video and audio sockets
+        videoRetryDelay = 2
         startVideoSocket(host: host, port: videoPort)
         startAudioSocket(host: host, port: audioPort)
     }
@@ -312,8 +314,12 @@ public final class ConnectionManager: @unchecked Sendable {
 
     /// The phone only serves video once the user approves screen capture there, which can be after
     /// the Mac connects; keep retrying while the control channel is up.
+    /// Backs off 2 s -> 5 min: each attempt goes through adb to the phone and wakes its Wi-Fi radio,
+    /// and with mirroring done by scrcpy the phone usually never serves this port.
     private func retryVideoSocket(after old: NWConnection, host: String, port: UInt16) {
-        networkQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+        let delay = videoRetryDelay
+        videoRetryDelay = min(videoRetryDelay * 2, 300)
+        networkQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self = self, self.controlConnection != nil, self.videoConnection === old else { return }
             old.cancel()
             self.videoDecoder.reset()
@@ -421,6 +427,7 @@ public final class ConnectionManager: @unchecked Sendable {
             guard let self = self else { return }
 
             if let data = data, !data.isEmpty {
+                self.videoRetryDelay = 2
                 self.videoDecoder.processRawStreamData(data)
             }
 
@@ -437,6 +444,7 @@ public final class ConnectionManager: @unchecked Sendable {
             guard let self = self else { return }
 
             if let data = data, !data.isEmpty {
+                self.audioPlayer.start() // no-op once running
                 self.audioPlayer.scheduleRawPCM16(data: data)
             }
 
