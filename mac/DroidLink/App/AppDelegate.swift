@@ -174,7 +174,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusBarItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "bolt.horizontal.fill", accessibilityDescription: "DroidLink")
+            button.image = NSImage(systemSymbolName: "laptopcomputer.and.iphone", accessibilityDescription: "DroidLink")
         }
         updateStatusBarMenu()
     }
