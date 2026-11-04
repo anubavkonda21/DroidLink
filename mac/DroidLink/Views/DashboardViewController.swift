@@ -14,6 +14,8 @@ public final class DashboardViewController: NSViewController {
     private var connectionManager: ConnectionManager { ConnectionManager.shared }
     private weak var webcamButton: NSButton?
     private weak var autoRotateButton: NSButton?
+    /// Auto-rotate starts off: the first time a phone connects after the app launches, DroidLink turns it off once.
+    private static var autoRotateDefaultApplied = false
     private var ringStopTimer: Timer? // non-nil while the phone is ringing
 
     private var deviceNameLabel: NSTextField!
@@ -135,6 +137,7 @@ public final class DashboardViewController: NSViewController {
         )
 
         updateDeviceTelemetry()
+        applyAutoRotateDefaultIfNeeded()
     }
 
     deinit {
@@ -452,6 +455,19 @@ public final class DashboardViewController: NSViewController {
     @objc private func deviceDataChanged(_ notif: Notification) {
         DispatchQueue.main.async { [weak self] in
             self?.updateDeviceTelemetry()
+            self?.applyAutoRotateDefaultIfNeeded()
+        }
+    }
+
+    /// Turns the phone's auto-rotate off once per app launch, when the phone first connects.
+    /// The tile can still turn it back on, and DroidLink leaves that choice alone until the app is relaunched.
+    private func applyAutoRotateDefaultIfNeeded() {
+        guard !Self.autoRotateDefaultApplied, connectionManager.status.isConnectedOrMirroring else { return }
+        Self.autoRotateDefaultApplied = true
+        let adb = connectionManager.adbService
+        Task {
+            _ = try? await adb.executeADB(["shell", "settings", "put", "system", "accelerometer_rotation", "0"])
+            refreshAutoRotateTile()
         }
     }
 
