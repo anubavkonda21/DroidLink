@@ -42,6 +42,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.droidlink.companion.models.MacWire
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -297,6 +298,11 @@ class ConnectionService : Service() {
                 InputService.key(it.int("keyCode") ?: return, it.int("action") ?: return, it.str("character"))
             }
             "sms_list" -> pushSmsList()
+            "sms_mark_read" -> {
+                val threadId = p?.str("threadId") ?: return
+                val read = p["read"]?.jsonPrimitive?.booleanOrNull ?: true
+                serviceScope.launch { SmsBridge.markRead(this@ConnectionService, threadId, read) }
+            }
             "sms_send" -> {
                 val to = p?.str("recipientNumber") ?: return
                 val body = p.str("messageBody") ?: return

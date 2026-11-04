@@ -11,7 +11,7 @@
 
 import AppKit
 
-public final class MessagesViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+public final class MessagesViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuDelegate {
     private var store: SMSStore { SMSStore.shared }
     private var selectedNumber: String?
     private var searchQuery = ""
@@ -20,6 +20,8 @@ public final class MessagesViewController: NSViewController, NSTableViewDataSour
     private var searchField: NSSearchField!
     private var conversationsTableView: NSTableView!
     private var listStatusView: StatusOverlay!
+    private var archivedButton: NSButton!
+    private var selectingInCode = false   // true while reloadAll restores the selection
 
     // right
     private var headerAvatar: AvatarView!
@@ -35,8 +37,9 @@ public final class MessagesViewController: NSViewController, NSTableViewDataSour
     private var lastThreadWidth: CGFloat = 0
 
     private var filteredConversations: [Conversation] {
-        guard !searchQuery.isEmpty else { return store.conversations }
-        return store.conversations.filter {
+        let all = store.visibleConversations
+        guard !searchQuery.isEmpty else { return all }
+        return all.filter {
             $0.contactName.localizedCaseInsensitiveContains(searchQuery) ||
             $0.contactNumber.contains(searchQuery) ||
             $0.messages.contains { $0.body.localizedCaseInsensitiveContains(searchQuery) }
@@ -143,7 +146,20 @@ public final class MessagesViewController: NSViewController, NSTableViewDataSour
         conversationsTableView.dataSource = self
         conversationsTableView.delegate = self
         conversationsTableView.rowHeight = 64
+        conversationsTableView.target = self
+        conversationsTableView.action = #selector(rowClicked(_:)) // clicking the already-open chat still marks it read
+        let rowMenu = NSMenu()
+        rowMenu.delegate = self
+        conversationsTableView.menu = rowMenu
         scroll.documentView = conversationsTableView
+
+        archivedButton = NSButton(title: "", target: self, action: #selector(toggleArchivedView(_:)))
+        archivedButton.isBordered = false
+        archivedButton.font = .systemFont(ofSize: 12, weight: .medium)
+        archivedButton.contentTintColor = .secondaryLabelColor
+        archivedButton.imagePosition = .imageLeading
+        archivedButton.translatesAutoresizingMaskIntoConstraints = false
+        pane.addSubview(archivedButton)
 
         listStatusView = StatusOverlay()
         listStatusView.translatesAutoresizingMaskIntoConstraints = false
@@ -158,7 +174,10 @@ public final class MessagesViewController: NSViewController, NSTableViewDataSour
             scroll.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10),
             scroll.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
+            scroll.bottomAnchor.constraint(equalTo: archivedButton.topAnchor, constant: -4),
+
+            archivedButton.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 18),
+            archivedButton.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -10),
 
             listStatusView.centerXAnchor.constraint(equalTo: pane.centerXAnchor),
             listStatusView.centerYAnchor.constraint(equalTo: pane.centerYAnchor),
@@ -322,12 +341,34 @@ public final class MessagesViewController: NSViewController, NSTableViewDataSour
         if selectedNumber == nil || selectedConversation == nil {
             selectedNumber = filteredConversations.first?.contactNumber
         }
+        selectingInCode = true
         conversationsTableView.reloadData()
         if let n = selectedNumber, let row = filteredConversations.firstIndex(where: { $0.contactNumber == n }) {
             conversationsTableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
+        selectingInCode = false
         updateListStatus()
+        updateArchivedButton()
         rebuildThread(scrollToEnd: true)
+        // a new text in the chat you're looking at counts as read (unless you marked it unread yourself)
+        if let conv = selectedConversation, view.window?.isKeyWindow == true, userOpenedChat,
+           store.isUnread(conv), !store.isManuallyUnread(conv) {
+            DispatchQueue.main.async { self.store.markRead(conv) }
+        }
+    }
+
+    private var userOpenedChat = false
+
+    private func updateArchivedButton() {
+        let n = store.archivedCount
+        archivedButton.isHidden = n == 0 && !store.showingArchived
+        if store.showingArchived {
+            archivedButton.title = "Back to Messages"
+            archivedButton.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil)
+        } else {
+            archivedButton.title = "Archived (\(n))"
+            archivedButton.image = NSImage(systemSymbolName: "archivebox", accessibilityDescription: nil)
+        }
     }
 
     private func updateListStatus() {
@@ -345,6 +386,11 @@ public final class MessagesViewController: NSViewController, NSTableViewDataSour
             listStatusView.show(symbol: "message", title: "No Messages",
                                 detail: store.state == .idle ? "Update DroidLink on your phone to sync texts." : nil,
                                 button: "Refresh")
+        } else if filteredConversations.isEmpty && store.showingArchived {
+            listStatusView.show(symbol: "archivebox", title: "No Archived Chats", detail: nil, button: nil)
+        } else if filteredConversations.isEmpty && searchQuery.isEmpty {
+            listStatusView.show(symbol: "message", title: "No Messages",
+                                detail: "Archived chats are under Archived below.", button: nil)
         } else if filteredConversations.isEmpty {
             listStatusView.show(symbol: nil, title: "No Results", detail: nil, button: nil)
         } else {
@@ -471,14 +517,133 @@ public final class MessagesViewController: NSViewController, NSTableViewDataSour
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !selectingInCode else { return }
         let row = conversationsTableView.selectedRow
         let list = filteredConversations
         guard row >= 0, row < list.count else { return }
-        guard list[row].contactNumber != selectedNumber else { return }
-        selectedNumber = list[row].contactNumber
-        rebuildThread(scrollToEnd: true)
-        view.window?.makeFirstResponder(composeField)
+        open(list[row])
     }
+
+    @objc private func rowClicked(_ sender: Any?) {
+        let row = conversationsTableView.clickedRow
+        let list = filteredConversations
+        guard row >= 0, row < list.count else { return }
+        open(list[row])
+    }
+
+    /// The user opened a chat (click or arrow keys): show it and clear its blue dot.
+    private func open(_ conv: Conversation) {
+        userOpenedChat = true
+        if conv.contactNumber != selectedNumber {
+            selectedNumber = conv.contactNumber
+            rebuildThread(scrollToEnd: true)
+            view.window?.makeFirstResponder(composeField)
+        }
+        if store.isUnread(conv) { store.markRead(conv) }
+    }
+
+    // MARK: - Swipe actions (like Messages: swipe right = Unread / Pin, swipe left = Archive / More)
+
+    public func tableView(_ tableView: NSTableView, rowActionsForRow row: Int, edge: NSTableView.RowActionEdge) -> [NSTableViewRowAction] {
+        let list = filteredConversations
+        guard row < list.count else { return [] }
+        let conv = list[row]
+
+        if edge == .leading {
+            let unread = store.isUnread(conv)
+            let readAction = NSTableViewRowAction(style: .regular, title: unread ? "Read" : "Unread") { [weak self] _, _ in
+                guard let self else { return }
+                unread ? self.store.markRead(conv) : self.store.markUnread(conv)
+                tableView.rowActionsVisible = false
+            }
+            readAction.backgroundColor = .droidAccent
+            readAction.image = NSImage(systemSymbolName: unread ? "message" : "message.badge", accessibilityDescription: nil)
+
+            let pinned = store.isPinned(conv)
+            let pinAction = NSTableViewRowAction(style: .regular, title: pinned ? "Unpin" : "Pin") { [weak self] _, _ in
+                self?.store.togglePin(conv)
+                tableView.rowActionsVisible = false
+            }
+            pinAction.backgroundColor = .systemOrange
+            pinAction.image = NSImage(systemSymbolName: pinned ? "pin.slash.fill" : "pin.fill", accessibilityDescription: nil)
+            return [readAction, pinAction]
+        }
+
+        let archived = store.isArchived(conv)
+        let archiveAction = NSTableViewRowAction(style: .regular, title: archived ? "Unarchive" : "Archive") { [weak self] _, _ in
+            self?.store.toggleArchive(conv)
+            tableView.rowActionsVisible = false
+        }
+        archiveAction.backgroundColor = .systemTeal
+        archiveAction.image = NSImage(systemSymbolName: archived ? "tray.and.arrow.up.fill" : "archivebox.fill", accessibilityDescription: nil)
+
+        let moreAction = NSTableViewRowAction(style: .regular, title: "More") { [weak self] _, row in
+            guard let self else { return }
+            let menu = NSMenu()
+            self.fillMenu(menu, for: conv)
+            let rect = tableView.rect(ofRow: row)
+            menu.popUp(positioning: nil, at: NSPoint(x: rect.maxX - 80, y: rect.maxY), in: tableView)
+            tableView.rowActionsVisible = false
+        }
+        moreAction.backgroundColor = .systemGray
+        moreAction.image = NSImage(systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: nil)
+        return [archiveAction, moreAction]
+    }
+
+    // MARK: - Right-click / More menu
+
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let row = conversationsTableView.clickedRow
+        let list = filteredConversations
+        guard row >= 0, row < list.count else { return }
+        fillMenu(menu, for: list[row])
+    }
+
+    private func fillMenu(_ menu: NSMenu, for conv: Conversation) {
+        func item(_ title: String, _ symbol: String, _ action: @escaping () -> Void) {
+            let mi = NSMenuItem(title: title, action: #selector(runMenuBlock(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            mi.representedObject = MenuBlock(action)
+            menu.addItem(mi)
+        }
+        if store.isUnread(conv) {
+            item("Mark as Read", "message") { [weak self] in self?.store.markRead(conv) }
+        } else {
+            item("Mark as Unread", "message.badge") { [weak self] in self?.store.markUnread(conv) }
+        }
+        if store.isPinned(conv) {
+            item("Unpin", "pin.slash") { [weak self] in self?.store.togglePin(conv) }
+        } else if !store.isArchived(conv) {
+            item("Pin", "pin") { [weak self] in self?.store.togglePin(conv) }
+        }
+        if store.isArchived(conv) {
+            item("Unarchive", "tray.and.arrow.up") { [weak self] in self?.store.toggleArchive(conv) }
+        } else {
+            item("Archive", "archivebox") { [weak self] in self?.store.toggleArchive(conv) }
+        }
+        menu.addItem(.separator())
+        item("Copy Phone Number", "doc.on.doc") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(conv.contactNumber, forType: .string)
+        }
+    }
+
+    @objc private func runMenuBlock(_ sender: NSMenuItem) {
+        (sender.representedObject as? MenuBlock)?.action()
+    }
+
+    @objc private func toggleArchivedView(_ sender: Any?) {
+        selectedNumber = nil
+        userOpenedChat = false
+        store.showingArchived.toggle()
+    }
+}
+
+private final class MenuBlock {
+    let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
 }
 
 // MARK: - Pieces
@@ -540,6 +705,7 @@ private final class ConversationRowCell: NSTableCellView {
     private let snippetLabel = NSTextField(wrappingLabelWithString: "")
     private let timeLabel = NSTextField(labelWithString: "")
     private let unreadDot = NSView()
+    private let pinGlyph = NSImageView()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -563,7 +729,11 @@ private final class ConversationRowCell: NSTableCellView {
         snippetLabel.cell?.truncatesLastVisibleLine = true
         snippetLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        [unreadDot, avatar, nameLabel, timeLabel, snippetLabel].forEach {
+        pinGlyph.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned")
+        pinGlyph.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+        pinGlyph.contentTintColor = .systemOrange
+
+        [unreadDot, avatar, nameLabel, timeLabel, snippetLabel, pinGlyph].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -580,7 +750,9 @@ private final class ConversationRowCell: NSTableCellView {
 
             nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -6),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: pinGlyph.leadingAnchor, constant: -4),
+            pinGlyph.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            pinGlyph.trailingAnchor.constraint(equalTo: timeLabel.leadingAnchor, constant: -4),
 
             timeLabel.firstBaselineAnchor.constraint(equalTo: nameLabel.firstBaselineAnchor),
             timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
@@ -599,7 +771,8 @@ private final class ConversationRowCell: NSTableCellView {
         nameLabel.stringValue = conv.contactName
         snippetLabel.stringValue = (conv.lastMessage?.body ?? "").replacingOccurrences(of: "\n", with: " ")
         timeLabel.stringValue = conv.lastMessage.map { ListTime.string($0.timestamp) } ?? ""
-        unreadDot.isHidden = conv.unreadCount == 0
+        unreadDot.isHidden = !SMSStore.shared.isUnread(conv)
+        pinGlyph.isHidden = !SMSStore.shared.isPinned(conv)
     }
 }
 

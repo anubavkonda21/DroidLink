@@ -86,6 +86,34 @@ object SmsBridge {
         }.getOrElse { Log.e(TAG, "Sending SMS failed", it); false }
     }
 
+    /**
+     * Marks a thread read (or its newest incoming text unread) in the phone's SMS store.
+     * Android only lets the default SMS app write there unless the WRITE_SMS app-op is allowed
+     * (`adb shell appops set com.droidlink.companion WRITE_SMS allow`); otherwise this is a no-op
+     * and the Mac still tracks read state on its own.
+     */
+    fun markRead(ctx: Context, threadId: String, read: Boolean) {
+        runCatching {
+            val cr = ctx.contentResolver
+            val n = if (read) {
+                val values = android.content.ContentValues().apply {
+                    put(Telephony.Sms.READ, 1)
+                    put(Telephony.Sms.SEEN, 1)
+                }
+                cr.update(Telephony.Sms.CONTENT_URI, values,
+                    "${Telephony.Sms.THREAD_ID}=? AND ${Telephony.Sms.READ}=0", arrayOf(threadId))
+            } else {
+                val newest = cr.query(Telephony.Sms.CONTENT_URI, arrayOf(Telephony.Sms._ID),
+                    "${Telephony.Sms.THREAD_ID}=? AND ${Telephony.Sms.TYPE}=${Telephony.Sms.MESSAGE_TYPE_INBOX}",
+                    arrayOf(threadId), "${Telephony.Sms.DATE} DESC")?.use { if (it.moveToFirst()) it.getLong(0) else null }
+                    ?: return
+                val values = android.content.ContentValues().apply { put(Telephony.Sms.READ, 0) }
+                cr.update(Telephony.Sms.CONTENT_URI, values, "${Telephony.Sms._ID}=?", arrayOf(newest.toString()))
+            }
+            Log.d(TAG, "Thread $threadId read=$read: $n row(s) updated")
+        }.onFailure { Log.w(TAG, "Couldn't change read state (not default SMS app?)", it) }
+    }
+
     private data class Row(val id: Long, val address: String, val body: String, val date: Long, val type: Int, val read: Boolean)
 
     private fun buildList(ctx: Context): JsonObject {

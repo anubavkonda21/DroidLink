@@ -37,6 +37,7 @@ public enum MessageType: String, Codable {
     case notificationReply = "notification_reply"
     case smsList = "sms_list"
     case smsSend = "sms_send"
+    case smsMarkRead = "sms_mark_read"   // Mac -> phone: {threadId, read}
     case callEvent = "call_event"
     case deviceStatusUpdate = "device_status_update"
     case macStatus = "mac_status"      // Mac -> phone: battery, storage, volume
