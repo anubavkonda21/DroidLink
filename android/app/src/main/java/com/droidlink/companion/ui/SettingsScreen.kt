@@ -3,7 +3,7 @@
  * Copyright (c) 2026 DroidLink Project. All rights reserved.
  *
  * User Settings Screen covering video encoder controls, network preference,
- * clipboard automation, security PINs, encryption, and open-source licenses.
+ * clipboard sync options, and app info.
  */
 
 package com.droidlink.companion.ui
@@ -60,9 +60,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.droidlink.companion.ui.theme.Accents
 import com.droidlink.companion.utils.Constants
-import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen() {
@@ -70,12 +71,6 @@ fun SettingsScreen() {
     val prefs = remember { context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE) }
 
     // Every setting is saved as it changes, so it survives app restarts and updates
-    // Video settings
-    var selectedResolution by remember { prefs.stringPref("resolution", "1080p (1920x1080)") }
-    var selectedFps by remember { prefs.intPref("fps", 60) }
-    var selectedCodec by remember { prefs.stringPref("codec", "H.264 (AVC)") }
-    var bitrateMbps by remember { prefs.floatPref("bitrate_mbps", 8.0f) }
-
     // Connection settings
     var preferredMode by remember { prefs.stringPref("preferred_mode", Constants.MODE_AUTO) }
     var servicePort by remember { prefs.stringPref("service_port", Constants.DEFAULT_CONTROL_PORT.toString()) }
@@ -85,12 +80,7 @@ fun SettingsScreen() {
     var otpForwarding by remember { prefs.boolPref("otp_forwarding", true) }
     var autoAcceptFiles by remember { prefs.boolPref("auto_accept_files", false) }
 
-    // Security
-    var requirePin by remember { prefs.boolPref("require_pin", false) }
-    var encryptionEnabled by remember { prefs.boolPref("encryption", true) }
-
     // Dialogs
-    var showResolutionDialog by remember { mutableStateOf(false) }
     var showModeDialog by remember { mutableStateOf(false) }
     var showLicensesDialog by remember { mutableStateOf(false) }
 
@@ -107,85 +97,15 @@ fun SettingsScreen() {
             color = MaterialTheme.colorScheme.primary
         )
         Text(
-            text = "Configure mirroring quality, network channels, and security",
+            text = "Connection, sync and app info",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // SECTION: Video Settings
-        SettingsSectionHeader(icon = Icons.Default.Videocam, title = "Video Streaming")
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                SettingsClickableRow(
-                    title = "Resolution",
-                    subtitle = selectedResolution,
-                    onClick = { showResolutionDialog = true }
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Frame Rate", style = MaterialTheme.typography.bodyLarge)
-                        Text("$selectedFps FPS", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                    }
-                    Row {
-                        listOf(30, 60, 90, 120).forEach { fps ->
-                            TextButton(onClick = { selectedFps = fps }) {
-                                Text(
-                                    text = "$fps",
-                                    fontWeight = if (selectedFps == fps) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selectedFps == fps) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Bitrate", style = MaterialTheme.typography.bodyLarge)
-                        Text("${bitrateMbps.roundToInt()} Mbps", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    }
-                    Slider(
-                        value = bitrateMbps,
-                        onValueChange = { bitrateMbps = it },
-                        valueRange = 2f..25f,
-                        steps = 22
-                    )
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                SettingsClickableRow(
-                    title = "Video Codec",
-                    subtitle = selectedCodec,
-                    onClick = {
-                        selectedCodec = if (selectedCodec.contains("H.264")) "H.265 (HEVC)" else "H.264 (AVC)"
-                        Toast.makeText(context, "Selected codec: $selectedCodec", Toast.LENGTH_SHORT).show()
-                    }
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
         // SECTION: Connection
-        SettingsSectionHeader(icon = Icons.Default.Router, title = "Connection & Discovery")
+        SettingsSectionHeader(icon = Icons.Default.Router, title = "Connection & Discovery", color = Accents.Blue)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -222,7 +142,7 @@ fun SettingsScreen() {
         Spacer(modifier = Modifier.height(24.dp))
 
         // SECTION: Clipboard & File Transfer
-        SettingsSectionHeader(icon = Icons.Default.Sync, title = "Ecosystem Sync")
+        SettingsSectionHeader(icon = Icons.Default.Sync, title = "Sync", color = Accents.Orange)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -258,36 +178,8 @@ fun SettingsScreen() {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // SECTION: Security
-        SettingsSectionHeader(icon = Icons.Default.Lock, title = "Security & Encryption")
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                SettingsSwitchRow(
-                    title = "Require PIN Pairing",
-                    subtitle = "Verify 6-digit PIN on Mac before accepting stream",
-                    checked = requirePin,
-                    onCheckedChange = { requirePin = it }
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                SettingsSwitchRow(
-                    title = "End-to-End Encryption",
-                    subtitle = "Encrypt video, notifications, and clipboard traffic",
-                    checked = encryptionEnabled,
-                    onCheckedChange = { encryptionEnabled = it }
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
         // SECTION: About
-        SettingsSectionHeader(icon = Icons.Default.Info, title = "About")
+        SettingsSectionHeader(icon = Icons.Default.Info, title = "About", color = Accents.Teal)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -309,9 +201,9 @@ fun SettingsScreen() {
 
                 SettingsClickableRow(
                     title = "GitHub Repository",
-                    subtitle = "github.com/droidlink/droidlink",
+                    subtitle = "github.com/anubavkonda21/DroidLink",
                     onClick = {
-                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com"))
+                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/anubavkonda21/DroidLink"))
                         context.startActivity(browserIntent)
                     }
                 )
@@ -327,42 +219,6 @@ fun SettingsScreen() {
         }
 
         Spacer(modifier = Modifier.height(30.dp))
-    }
-
-    // Resolution Picker Dialog
-    if (showResolutionDialog) {
-        val options = listOf("720p (1280x720)", "1080p (1920x1080)", "1440p (2560x1440)", "Native Display Resolution")
-        AlertDialog(
-            onDismissRequest = { showResolutionDialog = false },
-            title = { Text("Select Resolution") },
-            text = {
-                Column {
-                    options.forEach { opt ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    selectedResolution = opt
-                                    showResolutionDialog = false
-                                }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedResolution == opt,
-                                onClick = {
-                                    selectedResolution = opt
-                                    showResolutionDialog = false
-                                }
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(opt)
-                        }
-                    }
-                }
-            },
-            confirmButton = {}
-        )
     }
 
     // Preferred Transport Dialog
@@ -428,12 +284,12 @@ fun SettingsScreen() {
 }
 
 @Composable
-private fun SettingsSectionHeader(icon: ImageVector, title: String) {
+private fun SettingsSectionHeader(icon: ImageVector, title: String, color: Color) {
     Row(
         modifier = Modifier.padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
     }
@@ -486,7 +342,3 @@ private fun android.content.SharedPreferences.boolPref(key: String, default: Boo
     PrefState(getBoolean(key, default)) { edit().putBoolean(key, it).apply() }
 private fun android.content.SharedPreferences.stringPref(key: String, default: String) =
     PrefState(getString(key, default) ?: default) { edit().putString(key, it).apply() }
-private fun android.content.SharedPreferences.intPref(key: String, default: Int) =
-    PrefState(getInt(key, default)) { edit().putInt(key, it).apply() }
-private fun android.content.SharedPreferences.floatPref(key: String, default: Float) =
-    PrefState(getFloat(key, default)) { edit().putFloat(key, it).apply() }

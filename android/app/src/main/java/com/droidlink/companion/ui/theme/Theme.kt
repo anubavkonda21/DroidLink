@@ -2,7 +2,7 @@
  * DroidLink Android Companion Application
  * Copyright (c) 2026 DroidLink Project. All rights reserved.
  *
- * Material 3 application theme, dynamic color adaptation, and custom blue palette.
+ * Material 3 application theme, dynamic color adaptation, and custom mint palette.
  */
 
 package com.droidlink.companion.ui.theme
@@ -23,20 +23,31 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// DroidLink palette: Apple blue on neutral greys (AJ: no purple/indigo/violet). Keep in sync with mac/DroidLink/Models/Palette.swift.
-val Blue = Color(0xFF0A84FF)
-val BlueLight = Color(0xFF64B5FF)
-val BlueDark = Color(0xFF0060C7)
-val Teal = Color(0xFF30B0C7)
+// DroidLink palette: mint to match the app icon (mint squircle, dark green bolt), on neutral greys.
+// No purple/indigo/violet (AJ). Keep the Mac's Palette.swift in mind if this changes.
+val Mint = Color(0xFF5CD6A3)
+val MintLight = Color(0xFFA8F0D1)
+val ForestGreen = Color(0xFF0B3D2E)
+val MintDeep = Color(0xFF1F8A63)
+
+/** Extra colours for icons and tiles, so each feature has its own colour. */
+object Accents {
+    val Orange = Color(0xFFFF9F0A)
+    val Blue = Color(0xFF0A84FF)
+    val Pink = Color(0xFFFF375F)
+    val Teal = Color(0xFF30B0C7)
+    val Yellow = Color(0xFFFFD60A)
+    val Green = Color(0xFF30D158)
+}
 
 private val DarkColorScheme = darkColorScheme(
-    primary = BlueLight,
-    onPrimary = Color(0xFF00213F),
-    primaryContainer = BlueDark,
-    onPrimaryContainer = Color.White,
-    secondary = Teal,
+    primary = Mint,
+    onPrimary = ForestGreen,
+    primaryContainer = Color(0xFF14513C),
+    onPrimaryContainer = MintLight,
+    secondary = Accents.Teal,
     onSecondary = Color.Black,
-    tertiary = Teal,
+    tertiary = Accents.Orange,
     background = Color(0xFF000000),
     onBackground = Color(0xFFF2F2F7),
     surface = Color(0xFF1C1C1E),
@@ -46,13 +57,13 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Blue,
+    primary = MintDeep,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD6E9FF),
-    onPrimaryContainer = BlueDark,
-    secondary = Teal,
+    primaryContainer = MintLight,
+    onPrimaryContainer = ForestGreen,
+    secondary = Accents.Teal,
     onSecondary = Color.White,
-    tertiary = Teal,
+    tertiary = Accents.Orange,
     background = Color(0xFFF2F2F7),
     onBackground = Color(0xFF1C1C1E),
     surface = Color.White,

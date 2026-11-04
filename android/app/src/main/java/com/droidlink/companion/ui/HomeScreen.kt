@@ -39,7 +39,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
-import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
@@ -53,6 +52,8 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material.icons.filled.Bolt
+import com.droidlink.companion.ui.theme.Accents
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.animateContentSize
@@ -191,16 +192,17 @@ fun HomeScreen(
                 )
             }
 
+            // the app icon's bolt: mint when linked, grey when not
             Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(14.dp),
+                color = if (connectionState.isConnected) com.droidlink.companion.ui.theme.MintLight else MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.size(44.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = if (connectionState.isConnected) Icons.Default.CastConnected else Icons.Default.Cast,
-                        contentDescription = null,
-                        tint = if (connectionState.isConnected) MaterialTheme.colorScheme.primary else Color.Gray
+                        imageVector = Icons.Default.Bolt,
+                        contentDescription = if (connectionState.isConnected) "Connected" else "Not connected",
+                        tint = if (connectionState.isConnected) com.droidlink.companion.ui.theme.ForestGreen else Color.Gray
                     )
                 }
             }
@@ -364,7 +366,8 @@ fun HomeScreen(
                     }
                 },
                 label = "Send Clipboard",
-                icon = Icons.Default.ContentPaste
+                icon = Icons.Default.ContentPaste,
+                color = Accents.Orange
             )
 
             QuickActionTile(
@@ -372,7 +375,8 @@ fun HomeScreen(
                     filePickerLauncher.launch(arrayOf("*/*"))
                 },
                 label = "Send File",
-                icon = Icons.Default.UploadFile
+                icon = Icons.Default.UploadFile,
+                color = Accents.Blue
             )
 
             QuickActionTile(
@@ -380,7 +384,8 @@ fun HomeScreen(
                     photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                 },
                 label = "Send Photo",
-                icon = Icons.Default.Image
+                icon = Icons.Default.Image,
+                color = Accents.Pink
             )
         }
 
@@ -503,7 +508,8 @@ fun HomeScreen(
 private fun RowScope.QuickActionTile(
     onClick: () -> Unit,
     label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color
 ) {
     // ignore a second tap within 800 ms so one double-tap doesn't send twice
     var lastTap by remember { mutableStateOf(0L) }
@@ -525,8 +531,13 @@ private fun RowScope.QuickActionTile(
             modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(6.dp))
+            Box(
+                modifier = Modifier.size(40.dp).clip(CircleShape).background(color.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = color)
+            }
+            Spacer(Modifier.height(8.dp))
             Text(label, style = MaterialTheme.typography.labelMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
@@ -560,7 +571,7 @@ private fun MacCard(status: kotlinx.serialization.json.JsonObject) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Laptop, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Default.Laptop, contentDescription = null, tint = Accents.Teal)
                 Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
