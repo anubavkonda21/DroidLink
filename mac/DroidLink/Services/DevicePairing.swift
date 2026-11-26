@@ -121,11 +121,14 @@ final class DevicePairing {
         }
         b.start(queue: .main)
         connectBrowser = b
-        // Phones that are already advertising don't re-trigger the handler, so re-check now and then.
-        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+        // Phones that are already advertising don't re-trigger the handler; check occasionally only when needed.
+        let timer = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in
             guard let self, let b = self.connectBrowser else { return }
+            guard !ConnectionManager.shared.status.isConnected,
+                  self.pairedIP != nil || !self.remembered.isEmpty else { return }
             self.handleConnectResults(b.browseResults)
-        }.tolerance = 3
+        }
+        timer.tolerance = 15
     }
 
     private func handleConnectResults(_ results: Set<NWBrowser.Result>) {
@@ -210,7 +213,7 @@ final class DevicePairing {
 
 /// Resolves a Bonjour service name to an IPv4 address and port without connecting to it
 /// (connecting to the pairing port would use up the phone's one pairing attempt).
-private final class Resolver: NSObject, NetServiceDelegate {
+final class Resolver: NSObject, NetServiceDelegate {
     private static var live = Set<Resolver>()
     private let service: NetService
     private let done: (String?, Int) -> Void

@@ -54,36 +54,43 @@ public final class ADBService: @unchecked Sendable {
     // MARK: - State Properties
 
     public var isAdbAvailable: Bool = false {
-        didSet { NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self) }
+        didSet {
+            guard isAdbAvailable != oldValue else { return }
+            NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self)
+        }
     }
     public var adbPath: String? = nil
     public var devices: [ADBDevice] = [] {
         didSet {
+            guard devices != oldValue else { return }
             NotificationCenter.default.post(name: ADBService.didUpdateDevicesNotification, object: self)
             NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self)
         }
     }
     public var selectedDevice: ADBDevice? = nil {
-        didSet { NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self) }
+        didSet {
+            guard selectedDevice != oldValue else { return }
+            NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self)
+        }
     }
     public var isScanning: Bool = false {
-        didSet { NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self) }
+        didSet {
+            guard isScanning != oldValue else { return }
+            NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self)
+        }
     }
     public var lastError: String? = nil {
-        didSet { NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self) }
+        didSet {
+            guard lastError != oldValue else { return }
+            NotificationCenter.default.post(name: ADBService.didChangeStateNotification, object: self)
+        }
     }
 
     // MARK: - Private State
 
     private var scanTimer: Timer?
     private var lastRefresh = Date.distantPast
-    private let processQueue = DispatchQueue(label: "com.droidlink.adb.queue", qos: .userInitiated)
-
-    /// Phone on another network: this script finds it over Tailscale (Wireless debugging only, never port 5555).
-    private static let tailscaleFinder = "/Users/anubavkonda/Downloads/Screen mirror/.find-phone-tailscale.sh"
-    private var nextTailscaleSearch = Date.distantPast
-    private var tailscaleRetryDelay: TimeInterval = 30
-    private var tailscaleSearchRunning = false
+    private let processQueue = DispatchQueue(label: "com.droidlink.adb.queue", qos: .utility)
 
     // MARK: - Shared Instance
 
@@ -120,7 +127,6 @@ public final class ADBService: @unchecked Sendable {
             }
         }
 
-        // Fallback: search system PATH via `which adb`
         if let output = try? executeShellCommand("which adb").trimmingCharacters(in: .whitespacesAndNewlines),
            !output.isEmpty, FileManager.default.isExecutableFile(atPath: output) {
             self.adbPath = output
@@ -131,21 +137,22 @@ public final class ADBService: @unchecked Sendable {
         }
     }
 
-    // MARK: - Periodic Device Discovery
+    // MARK: - Low-Power Periodic Device Discovery
 
-    public func startPeriodicDiscovery(interval: TimeInterval = 3.0) {
+    /// Checks ADB conservatively so macOS can keep CPU and USB/Wi-Fi asleep in the background:
+    /// every 10s when disconnected, or every 45s when a phone is already connected.
+    public func startPeriodicDiscovery(interval: TimeInterval = 10.0) {
         stopPeriodicDiscovery()
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.refreshDevices()
             self.scanTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 guard let self else { return }
-                // A phone is up: spawning `adb devices` every 3 s buys nothing, so check every 12 s instead.
-                if self.devices.contains(where: { $0.state == .device }),
-                   Date().timeIntervalSince(self.lastRefresh) < 12 { return }
+                let minWait: TimeInterval = self.devices.contains(where: { $0.state == .device }) ? 45.0 : interval
+                if Date().timeIntervalSince(self.lastRefresh) < minWait { return }
                 self.refreshDevices()
             }
-            self.scanTimer?.tolerance = 1
+            self.scanTimer?.tolerance = 4.0
         }
     }
 
@@ -157,7 +164,7 @@ public final class ADBService: @unchecked Sendable {
     // MARK: - Device Refresh
 
     public func refreshDevices() {
-        guard isAdbAvailable, let adb = adbPath else { return }
+        guard isAdbAvailable, let adb = adbPath, !isScanning else { return }
         isScanning = true
         lastRefresh = Date()
 
@@ -171,18 +178,14 @@ public final class ADBService: @unchecked Sendable {
                     self.devices = parsedDevices
                     self.isScanning = false
 
-                    // Keep the chosen phone; otherwise fall back to the saved choice, then Wi-Fi, then anything.
                     if self.selectedDevice.map({ s in !parsedDevices.contains { $0.serial == s.serial } }) ?? true {
                         let ready = parsedDevices.filter { $0.state == .device }
                         let saved = DevicePairing.shared.selectedSerial
                         let savedIP = saved.flatMap { $0.contains(":") ? String($0.split(separator: ":")[0]) + ":" : nil }
-                        self.selectedDevice = ready.first { $0.serial == saved } ?? ready.first { savedIP != nil && $0.serial.hasPrefix(savedIP!) }  // same phone, new Wi-Fi port
-                            ?? ready.first { $0.isWireless } ?? parsedDevices.first
-                    }
-                    if parsedDevices.contains(where: { $0.state == .device }) {
-                        self.tailscaleRetryDelay = 30
-                    } else {
-                        self.searchViaTailscale()
+                        self.selectedDevice = ready.first { $0.serial == saved }
+                            ?? ready.first { savedIP != nil && $0.serial.hasPrefix(savedIP!) }
+                            ?? ready.first { $0.isWireless }
+                            ?? parsedDevices.first
                     }
                 }
             } catch {
@@ -194,27 +197,8 @@ public final class ADBService: @unchecked Sendable {
         }
     }
 
-    /// No phone reachable: look for it over Tailscale in the background, backing off
-    /// from 30 s up to 10 min so a phone with Wireless debugging off isn't probed constantly.
-    private func searchViaTailscale() {
-        guard !tailscaleSearchRunning, Date() >= nextTailscaleSearch,
-              FileManager.default.isExecutableFile(atPath: Self.tailscaleFinder) else { return }
-        tailscaleSearchRunning = true
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self = self else { return }
-            let found = (try? self.runProcess(executable: Self.tailscaleFinder, arguments: [])) != nil
-            DispatchQueue.main.async {
-                self.tailscaleSearchRunning = false
-                self.nextTailscaleSearch = Date().addingTimeInterval(found ? 30 : self.tailscaleRetryDelay)
-                self.tailscaleRetryDelay = found ? 30 : min(self.tailscaleRetryDelay * 2, 600)
-                if found { self.refreshDevices() }
-            }
-        }
-    }
-
     // MARK: - Command Execution
 
-    /// Runs an arbitrary ADB command asynchronously
     public func executeADB(_ arguments: [String], serial: String? = nil) async throws -> String {
         guard let adb = adbPath else {
             throw NSError(domain: "ADBService", code: 404, userInfo: [NSLocalizedDescriptionKey: "ADB executable not found"])
@@ -238,90 +222,43 @@ public final class ADBService: @unchecked Sendable {
         }
     }
 
-    /// Fetches rich device telemetry by querying device properties & dumpsys
+    /// Lightweight single-command identity lookup (no heavy dumpsys battery/storage/screen queries).
     public func fetchDeviceInfo(serial: String? = nil) async throws -> DeviceInfo {
         let model = try await executeADB(["shell", "getprop", "ro.product.model"], serial: serial)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let androidVer = try await executeADB(["shell", "getprop", "ro.build.version.release"], serial: serial)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Query Battery
-        var batteryLevel = 80
-        var isCharging = false
-        if let batteryDump = try? await executeADB(["shell", "dumpsys", "battery"], serial: serial) {
-            batteryLevel = parseBatteryLevel(from: batteryDump)
-            isCharging = batteryDump.contains("status: 2") || batteryDump.contains("status: 5") // Charging or Full
-        }
-
-        // Query Storage
-        var totalStorage: Int64 = 128_000_000_000
-        var freeStorage: Int64 = 64_000_000_000
-        if let dfDump = try? await executeADB(["shell", "df", "/data"], serial: serial) {
-            let parsed = parseStorage(from: dfDump)
-            totalStorage = parsed.total
-            freeStorage = parsed.free
-        }
-
-        // Query Resolution & Density
-        var width = 1080
-        var height = 2400
-        var dpi = 420
-        if let wmSize = try? await executeADB(["shell", "wm", "size"], serial: serial),
-           let parsedSize = parseWindowSize(from: wmSize) {
-            width = parsedSize.width
-            height = parsedSize.height
-        }
-        if let wmDensity = try? await executeADB(["shell", "wm", "density"], serial: serial),
-           let parsedDpi = parseDensity(from: wmDensity) {
-            dpi = parsedDpi
-        }
-
         let targetSerial = serial ?? selectedDevice?.serial ?? UUID().uuidString
         let isWireless = targetSerial.contains(":")
 
         return DeviceInfo(
             id: targetSerial,
-            name: model.isEmpty ? "Android Device" : model,
+            name: model.isEmpty ? "Android Phone" : model,
             model: model,
-            androidVersion: "Android \(androidVer)",
-            batteryLevel: batteryLevel,
-            storageTotal: totalStorage,
-            storageFree: freeStorage,
-            isCharging: isCharging,
-            wifiName: isWireless ? "Wi-Fi (Active)" : nil,
+            androidVersion: "Android",
+            batteryLevel: 100,
+            storageTotal: 0,
+            storageFree: 0,
+            isCharging: false,
+            wifiName: isWireless ? "Wi-Fi" : nil,
             ipAddress: isWireless ? targetSerial.components(separatedBy: ":").first : nil,
-            screenWidth: width,
-            screenHeight: height,
-            screenDpi: dpi,
+            screenWidth: 1080,
+            screenHeight: 2400,
+            screenDpi: 420,
             connectionType: isWireless ? .wifi : .usb
         )
     }
 
-    /// Sets up port forwarding: Mac localhost:localPort -> Android remotePort
     public func forwardPort(local: UInt16, remote: UInt16, serial: String? = nil) async throws {
         _ = try await executeADB(["forward", "tcp:\(local)", "tcp:\(remote)"], serial: serial)
     }
 
-    /// Removes an existing port forward
     public func removeForward(local: UInt16, serial: String? = nil) async throws {
         _ = try await executeADB(["forward", "--remove", "tcp:\(local)"], serial: serial)
     }
 
-    /// Connects to a wireless device via IP address and port
     public func connectWireless(ip: String, port: Int = 5555) async throws -> String {
         let result = try await executeADB(["connect", "\(ip):\(port)"], serial: nil)
         refreshDevices()
         return result
-    }
-
-    /// Pushes a local file to the Android device
-    public func pushFile(localPath: String, remotePath: String, serial: String? = nil) async throws {
-        _ = try await executeADB(["push", localPath, remotePath], serial: serial)
-    }
-
-    /// Pulls a remote file from Android to local Mac path
-    public func pullFile(remotePath: String, localPath: String, serial: String? = nil) async throws {
-        _ = try await executeADB(["pull", remotePath, localPath], serial: serial)
     }
 
     // MARK: - Output Parsers
@@ -376,55 +313,6 @@ public final class ADBService: @unchecked Sendable {
         }
 
         return result
-    }
-
-    private func parseBatteryLevel(from dump: String) -> Int {
-        for line in dump.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("level:") {
-                let parts = trimmed.components(separatedBy: ":")
-                if parts.count > 1, let val = Int(parts[1].trimmingCharacters(in: .whitespaces)) {
-                    return val
-                }
-            }
-        }
-        return 85
-    }
-
-    private func parseStorage(from dump: String) -> (total: Int64, free: Int64) {
-        let lines = dump.components(separatedBy: .newlines)
-        for line in lines.dropFirst() {
-            let parts = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-            if parts.count >= 4, let total1k = Int64(parts[1]), let free1k = Int64(parts[3]) {
-                return (total: total1k * 1024, free: free1k * 1024)
-            }
-        }
-        return (total: 128_000_000_000, free: 64_000_000_000)
-    }
-
-    private func parseWindowSize(from dump: String) -> (width: Int, height: Int)? {
-        let pattern = #"(\d+)x(\d+)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
-        let range = NSRange(dump.startIndex..<dump.endIndex, in: dump)
-        if let match = regex.firstMatch(in: dump, options: [], range: range) {
-            let wStr = (dump as NSString).substring(with: match.range(at: 1))
-            let hStr = (dump as NSString).substring(with: match.range(at: 2))
-            if let w = Int(wStr), let h = Int(hStr) {
-                return (width: min(w, h), height: max(w, h))
-            }
-        }
-        return nil
-    }
-
-    private func parseDensity(from dump: String) -> Int? {
-        let pattern = #"(\d+)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
-        let range = NSRange(dump.startIndex..<dump.endIndex, in: dump)
-        if let match = regex.firstMatch(in: dump, options: [], range: range) {
-            let dStr = (dump as NSString).substring(with: match.range(at: 1))
-            return Int(dStr)
-        }
-        return nil
     }
 
     // MARK: - Process Execution Helper

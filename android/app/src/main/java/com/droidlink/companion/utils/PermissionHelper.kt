@@ -2,7 +2,7 @@
  * DroidLink Android Companion Application
  * Copyright (c) 2026 DroidLink Project. All rights reserved.
  *
- * Centralized runtime permission checks, notification listener verification, and system settings navigation.
+ * Centralized runtime permission checks and notification listener settings navigation.
  */
 
 package com.droidlink.companion.utils
@@ -19,13 +19,12 @@ import androidx.core.content.ContextCompat
 import com.droidlink.companion.services.NotificationListenerService
 
 /**
- * Utility helper managing Android runtime permissions, specialized system settings intents,
- * and service authorization verification.
+ * Utility helper managing Android runtime permissions and Notification Listener authorization.
  */
 object PermissionHelper {
 
     /**
-     * Core permissions required for network synchronization, foreground execution, and basic telemetry.
+     * Core permissions required for network synchronization and foreground status notification.
      */
     val CORE_PERMISSIONS: Array<String> = buildList {
         add(Manifest.permission.INTERNET)
@@ -36,82 +35,18 @@ object PermissionHelper {
         }
     }.toTypedArray()
 
-    /**
-     * Telephony & Contact permissions for the Call Bridge ecosystem feature.
-     */
-    val CALL_BRIDGE_PERMISSIONS = arrayOf(
-        Manifest.permission.READ_PHONE_STATE,
-        Manifest.permission.CALL_PHONE,
-        Manifest.permission.READ_CONTACTS
-    )
+    val ALL_APP_PERMISSIONS: Array<String> = CORE_PERMISSIONS
 
-    /**
-     * SMS permissions for the Mac's Messages page (read conversations, send replies, see new texts).
-     */
-    val SMS_PERMISSIONS = arrayOf(
-        Manifest.permission.READ_SMS,
-        Manifest.permission.SEND_SMS,
-        Manifest.permission.RECEIVE_SMS
-    )
-
-    /**
-     * Storage & Media permissions for two-way file sharing.
-     */
-    val STORAGE_PERMISSIONS: Array<String> = buildList {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.READ_MEDIA_IMAGES)
-            add(Manifest.permission.READ_MEDIA_VIDEO)
-        } else {
-            add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        }
-    }.toTypedArray()
-
-    /**
-     * Internal audio capture permission.
-     */
-    val AUDIO_PERMISSIONS = arrayOf(
-        Manifest.permission.RECORD_AUDIO
-    )
-
-    /**
-     * Complete aggregate list of standard dangerous runtime permissions needed across all features.
-     */
-    val ALL_APP_PERMISSIONS: Array<String> = (CORE_PERMISSIONS + CALL_BRIDGE_PERMISSIONS + SMS_PERMISSIONS + STORAGE_PERMISSIONS + AUDIO_PERMISSIONS).distinct().toTypedArray()
-
-    /**
-     * Checks if a single permission is granted.
-     */
     fun isPermissionGranted(context: Context, permission: String): Boolean {
         return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
     }
 
-    /**
-     * Checks if all permissions in the specified list are granted.
-     */
     fun arePermissionsGranted(context: Context, permissions: Array<String>): Boolean {
         return permissions.all { isPermissionGranted(context, it) }
     }
 
-    /**
-     * Returns true if all core requirements (network + notifications) are satisfied.
-     */
     fun hasCorePermissions(context: Context): Boolean {
         return arePermissionsGranted(context, CORE_PERMISSIONS)
-    }
-
-    /**
-     * Returns true if Call Bridge permissions are fully granted.
-     */
-    fun hasCallBridgePermissions(context: Context): Boolean {
-        return arePermissionsGranted(context, CALL_BRIDGE_PERMISSIONS)
-    }
-
-    /**
-     * Returns true if File Transfer storage permissions are fully granted.
-     */
-    fun hasStoragePermissions(context: Context): Boolean {
-        return arePermissionsGranted(context, STORAGE_PERMISSIONS)
     }
 
     /**
@@ -132,9 +67,6 @@ object PermissionHelper {
         }
     }
 
-    /**
-     * Creates an Intent directing the user to app details settings page for manual permission grant.
-     */
     fun createAppSettingsIntent(context: Context): Intent {
         return Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.fromParts("package", context.packageName, null)
@@ -142,17 +74,11 @@ object PermissionHelper {
         }
     }
 
-    /**
-     * Checks if battery optimization is ignored for smooth background operation.
-     */
     fun isIgnoringBatteryOptimizations(context: Context): Boolean {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
         return powerManager?.isIgnoringBatteryOptimizations(context.packageName) ?: true
     }
 
-    /**
-     * Intent to request exemption from battery optimizations.
-     */
     fun createIgnoreBatteryOptimizationIntent(context: Context): Intent {
         return Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
             data = Uri.parse("package:${context.packageName}")

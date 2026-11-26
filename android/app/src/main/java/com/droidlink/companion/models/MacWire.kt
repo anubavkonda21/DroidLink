@@ -25,15 +25,9 @@ object MacWire {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** Maps an internal message to the Mac's type + payload. Returns null for messages the Mac has no type for. */
     fun encode(message: ProtocolMessage, nowMs: Long = System.currentTimeMillis()): ByteArray? {
         val (type, payload) = when (message) {
             is ProtocolMessage.Heartbeat -> "heartbeat" to null
-            is ProtocolMessage.ClipboardSync -> "clipboard_sync" to buildJsonObject {
-                put("text", message.text)
-                put("isHtml", false)
-                put("timestamp", message.timestamp / 1000.0)
-            }
             is ProtocolMessage.NotificationForward -> "notification_post" to buildJsonObject {
                 put("id", message.key.ifEmpty { "${message.packageName}|${message.id}" })
                 put("appName", message.appName)
@@ -45,36 +39,18 @@ object MacWire {
                 put("timestamp", Instant.ofEpochMilli(message.timestamp).truncatedTo(ChronoUnit.SECONDS).toString())
                 put("isRead", false)
                 put("canReply", message.hasReplyAction && !message.isCall)
-                if (message.isCall) put("isSilent", true) // caller ID only: no sound, no answer button
+                if (message.isCall) put("isSilent", true)
                 putJsonArray("actions") {
                     if (message.hasReplyAction && !message.isCall) addJsonObject {
                         put("id", "reply"); put("title", "Reply"); put("isQuickReply", true)
                     }
                 }
             }
-            is ProtocolMessage.CallEvent -> "call_event" to buildJsonObject {
-                put("callState", when (message.callState) {
-                    "RINGING" -> "incoming"
-                    "OFFHOOK" -> "answered"
-                    else -> "ended"
-                })
-                message.callerName?.let { put("callerName", it) }
-                put("callerNumber", message.phoneNumber)
-            }
-            is ProtocolMessage.FileTransferOffer -> "file_transfer_init" to buildJsonObject {
-                put("transferId", message.fileId)
-                put("fileName", message.fileName)
-                put("fileSize", message.fileSize)
-                put("mimeType", "application/octet-stream")
-                put("destinationFolder", "/sdcard/Download/DroidLink")
-            }
-            is ProtocolMessage.MacCommand -> "mac_command" to buildJsonObject { put("action", message.action) }
             else -> return null
         }
         return encodeRaw(type, payload, nowMs)
     }
 
-    /** Envelope for a type with no ProtocolMessage class (e.g. "sms_list"). */
     fun encodeRaw(type: String, payload: JsonObject?, nowMs: Long = System.currentTimeMillis()): ByteArray {
         val envelope = buildJsonObject {
             put("type", type)
@@ -104,7 +80,6 @@ object MacWire {
         }
     }
 
-    /** Returns null on clean end of stream. */
     fun readFrame(input: DataInputStream): ByteArray? {
         val length = runCatching { input.readInt() }.getOrNull() ?: return null
         require(length in 0..MAX_FRAME) { "Bad frame length $length" }

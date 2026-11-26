@@ -139,11 +139,14 @@ public final class NotificationBridge: NSObject, UNUserNotificationCenterDelegat
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
-            // Insert into local in-app list
+            // Insert into local in-app list (capped at 200 entries to keep background memory minimal)
             if let idx = self.notifications.firstIndex(where: { $0.id == notification.id }) {
                 self.notifications[idx] = notification
             } else {
                 self.notifications.insert(notification, at: 0)
+                if self.notifications.count > 200 {
+                    self.notifications.removeLast(self.notifications.count - 200)
+                }
             }
 
             self.postMacSystemNotification(notification)

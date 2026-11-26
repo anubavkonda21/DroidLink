@@ -8,57 +8,60 @@
 
 import AppKit
 
-/// Pure AppKit application delegate managing window creation, status bar item,
-/// main menu bar, and system sleep/wake events.
-public final class AppDelegate: NSObject, NSApplicationDelegate {
+/// Pure AppKit application delegate managing the notifications window, status bar item,
+/// main menu bar, device pairing, and system sleep/wake events.
+public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     public var window: NSWindow?
     private var statusItem: NSStatusItem?
-    private var webcamProcess: Process?
-    static let webcamStateChanged = Notification.Name("DroidLinkWebcamStateChanged")
-    var isWebcamOn: Bool { webcamProcess?.isRunning == true }
+    private var allowTermination = false
 
     private var connectionManager: ConnectionManager { ConnectionManager.shared }
 
     // MARK: - App Lifecycle
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        // Ensure regular application mode (dock icon and menu bar)
+        // Default auto-connect ON if never explicitly turned off
+        if UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.autoConnect) == nil {
+            UserDefaults.standard.set(true, forKey: MirrorSettings.StorageKeys.autoConnect)
+        }
+
         NSApp.setActivationPolicy(.regular)
 
         setupMainMenu()
         setupMainWindow()
-        GlossyTrafficLights.installEverywhere()  // glossy Aqua-style close/minimize/zoom buttons
+        GlossyTrafficLights.installEverywhere()
         setupStatusBarItem()
 
-        // Locate ADB and start discovery
         ADBService.shared.locateADB()
-        DevicePairing.shared.startConnectBrowser()  // reconnects remembered phones over Wi-Fi
+        DevicePairing.shared.startConnectBrowser()
 
-        // Register power events
         registerSleepWakeNotifications()
 
-        // Listen for connection changes to update status item
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(connectionStateChanged(_:)),
-            name: ConnectionManager.didChangeStatusNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(connectionStateChanged(_:)),
-            name: ConnectionManager.didChangeDeviceInfoNotification,
-            object: nil
-        )
-        for name in [ADBService.didUpdateDevicesNotification, DevicePairing.didChange] {
+        for name in [
+            ConnectionManager.didChangeStatusNotification,
+            ConnectionManager.didChangeDeviceInfoNotification,
+            ADBService.didUpdateDevicesNotification,
+            DeviceDiscovery.didUpdateDevicesNotification,
+            DevicePairing.didChange,
+            NotificationBridge.didUpdateNotificationsNotification
+        ] {
             NotificationCenter.default.addObserver(self, selector: #selector(connectionStateChanged(_:)), name: name, object: nil)
         }
 
         updateStatusBarMenu()
     }
 
+    public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if allowTermination {
+            return .terminateNow
+        }
+        // Keep DroidLink running in the menu bar on Cmd+Q / Dock Quit so the phone stays connected
+        window?.orderOut(nil)
+        NSApp.setActivationPolicy(.accessory)
+        return .terminateCancel
+    }
+
     public func applicationWillTerminate(_ notification: Notification) {
-        webcamProcess?.terminate()
         connectionManager.disconnect()
         ADBService.shared.stopPeriodicDiscovery()
     }
@@ -79,24 +82,35 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupMainWindow() {
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 750),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable], // no fullSizeContentView: it hid content under the toolbar
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        win.minSize = NSSize(width: 850, height: 600)
-        win.title = "DroidLink"
+        win.minSize = NSSize(width: 560, height: 440)
+        win.title = "DroidLink Notifications"
         win.titleVisibility = .visible
         win.titlebarAppearsTransparent = false
         win.isReleasedWhenClosed = false
 
         let rootVC = MainSplitViewController()
         win.contentViewController = rootVC
+        win.delegate = self
         win.center()
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
         self.window = win
+    }
+
+    public func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === window else { return }
+        // Hide Dock icon while running quietly in the menu bar receiving notifications
+        DispatchQueue.main.async {
+            if self.window?.isVisible != true {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
     }
 
     // MARK: - Main Menu Setup
@@ -141,16 +155,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
-        // 4. View Menu
-        let viewMenuItem = NSMenuItem()
-        let viewMenu = NSMenu(title: "View")
-        let fullScreenItem = NSMenuItem(title: "Toggle Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
-        fullScreenItem.keyEquivalentModifierMask = [.command, .control]
-        viewMenu.addItem(fullScreenItem)
-        viewMenuItem.submenu = viewMenu
-        mainMenu.addItem(viewMenuItem)
-
-        // 5. Window Menu
+        // 4. Window Menu
         let windowMenuItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
@@ -160,7 +165,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
 
-        // 6. Help Menu
+        // 5. Help Menu
         let helpMenuItem = NSMenuItem()
         let helpMenu = NSMenu(title: "Help")
         helpMenu.addItem(withTitle: "Setup Wizard…", action: #selector(openWizard(_:)), keyEquivalent: "")
@@ -175,7 +180,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusBarItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "bolt.horizontal.fill", accessibilityDescription: "DroidLink")
+            button.image = NSImage(systemSymbolName: "bell.badge.fill", accessibilityDescription: "DroidLink Notifications")
         }
         updateStatusBarMenu()
     }
@@ -184,73 +189,43 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let item = statusItem else { return }
 
         let menu = NSMenu()
-        let isConnected = connectionManager.status.isConnectedOrMirroring
+        let isConnected = connectionManager.status.isConnected
+        let unreadCount = connectionManager.notificationBridge.notifications.filter { !$0.isRead }.count
+
+        item.button?.title = unreadCount > 0 ? " \(unreadCount)" : ""
 
         if let info = connectionManager.currentDeviceInfo, isConnected {
-            // Update button label
-            item.button?.title = " \(info.batteryLevel)%"
-
-            let devHeader = NSMenuItem(title: info.name, action: nil, keyEquivalent: "")
+            let devHeader = NSMenuItem(title: "Connected: \(info.name)", action: nil, keyEquivalent: "")
             devHeader.isEnabled = false
             menu.addItem(devHeader)
 
-            let batItem = NSMenuItem(title: "Battery: \(info.batteryFormatted) (\(info.isCharging ? "Charging" : "Discharging"))", action: nil, keyEquivalent: "")
-            batItem.isEnabled = false
-            menu.addItem(batItem)
-
-            let latItem = NSMenuItem(title: "Latency: \(connectionManager.latencyMs) ms", action: nil, keyEquivalent: "")
-            latItem.isEnabled = false
-            menu.addItem(latItem)
-
             menu.addItem(.separator())
 
-            menu.addItem(withTitle: "Open DroidLink Window", action: #selector(openMainWindow(_:)), keyEquivalent: "")
-            menu.addItem(withTitle: "Phone Home Button", action: #selector(sendHomeButton(_:)), keyEquivalent: "")
-
-            menu.addItem(.separator())
-
+            menu.addItem(withTitle: "Open Notifications", action: #selector(openMainWindow(_:)), keyEquivalent: "")
             menu.addItem(withTitle: "Disconnect \(info.name)", action: #selector(disconnectDevice(_:)), keyEquivalent: "")
         } else {
-            item.button?.title = ""
-
-            let noDev = NSMenuItem(title: "No Device Connected", action: nil, keyEquivalent: "")
+            let noDev = NSMenuItem(title: "No Phone Connected", action: nil, keyEquivalent: "")
             noDev.isEnabled = false
             menu.addItem(noDev)
 
             menu.addItem(.separator())
 
-            menu.addItem(withTitle: "Open DroidLink Window", action: #selector(openMainWindow(_:)), keyEquivalent: "")
-            menu.addItem(withTitle: "Connect Device", action: #selector(connectDevice(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Open Notifications", action: #selector(openMainWindow(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Connect Phone", action: #selector(connectDevice(_:)), keyEquivalent: "")
             menu.addItem(withTitle: "Refresh Devices", action: #selector(refreshDevices(_:)), keyEquivalent: "")
         }
 
         menu.addItem(.separator())
         menu.addItem(devicesMenuItem())
         menu.addItem(withTitle: "Add Phone with QR Code…", action: #selector(addDevice(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Open Tailscale", action: #selector(openTailscale(_:)), keyEquivalent: "")
-
-        menu.addItem(.separator())
-        let camItem = NSMenuItem(title: "Use Phone as Webcam", action: #selector(toggleWebcam(_:)), keyEquivalent: "")
-        camItem.state = webcamProcess?.isRunning == true ? .on : .off
-        menu.addItem(camItem)
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "Setup Wizard…", action: #selector(openWizard(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Preferences…", action: #selector(openPreferences(_:)), keyEquivalent: ",")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit DroidLink", action: #selector(quitApp(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Completely", action: #selector(quitCompletely(_:)), keyEquivalent: "")
 
         item.menu = menu
-    }
-
-    /// Tailscale links the Mac and phone when they're on different networks.
-    @objc private func openTailscale(_ sender: Any?) {
-        let ids = ["io.tailscale.ipn.macos", "io.tailscale.ipn.macsys"]  // App Store, standalone
-        if let url = ids.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
-        } else if let url = URL(string: "https://tailscale.com/download/mac") {
-            NSWorkspace.shared.open(url)
-        }
     }
 
     @objc private func connectionStateChanged(_ notif: Notification) {
@@ -260,72 +235,50 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Set by the menu's Disconnect so we don't reconnect straight away; picking a phone clears it.
     private var userDisconnected = false
     private var lastAutoConnect = Date.distantPast
+    private var pendingAutoConnect = false
 
-    /// Link to the chosen phone on launch and whenever adb sees it again while nothing is connected.
+    /// Link to the chosen phone (USB/Wi-Fi ADB, or Bonjour Wi-Fi fallback) whenever nothing is connected.
     private func autoConnectIfIdle() {
-        guard !userDisconnected else { return }
+        let autoConnect = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.autoConnect) as? Bool ?? true
+        guard autoConnect, !userDisconnected else { return }
         switch connectionManager.status {
         case .disconnected, .error: break
         default: return
         }
-        guard let serial = connectionManager.adbService.selectedDevice?.serial,
-              connectionManager.adbService.devices.contains(where: { $0.serial == serial && $0.state == .device }),
-              Date().timeIntervalSince(lastAutoConnect) > 10 else { return }  // a failed attempt sets .error; don't loop on it
-        lastAutoConnect = Date()
-        selectDevice(serial: serial)
+
+        let elapsed = Date().timeIntervalSince(lastAutoConnect)
+        if elapsed <= 10 {
+            if !pendingAutoConnect {
+                pendingAutoConnect = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + (10.5 - elapsed)) { [weak self] in
+                    self?.pendingAutoConnect = false
+                    self?.autoConnectIfIdle()
+                }
+            }
+            return
+        }
+
+        if let serial = connectionManager.adbService.selectedDevice?.serial,
+           connectionManager.adbService.devices.contains(where: { $0.serial == serial && $0.state == .device }) {
+            lastAutoConnect = Date()
+            selectDevice(serial: serial)
+            return
+        }
+
+        if let wifiDevice = connectionManager.deviceDiscovery.discoveredDevices.first(where: {
+            $0.transport == .mdnsWifi && ($0.ipAddress != nil || $0.bonjourServiceName != nil)
+        }) {
+            lastAutoConnect = Date()
+            connectionManager.connect(to: wifiDevice)
+        }
     }
 
     // MARK: - Menu Actions
 
-    /// Phone camera -> OBS Virtual Camera, via the same kind of launcher script as mirroring.
-    @objc func toggleWebcam(_ sender: Any?) {
-        if let p = webcamProcess, p.isRunning {
-            p.terminate()
-            return
-        }
-        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("droidlink-webcam.log")
-        FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        p.arguments = ["/Users/anubavkonda/Downloads/Screen mirror/Phone Webcam.command"]
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        p.environment = env
-        p.standardInput = FileHandle.nullDevice
-        if let log = try? FileHandle(forWritingTo: logURL) {
-            p.standardOutput = log
-            p.standardError = log
-        }
-        p.terminationHandler = { [weak self] proc in
-            let failed = proc.terminationReason == .exit && proc.terminationStatus != 0
-            let tail = ((try? String(contentsOf: logURL, encoding: .utf8)) ?? "")
-                .split(separator: "\n").suffix(6).joined(separator: "\n")
-            DispatchQueue.main.async {
-                self?.webcamProcess = nil
-                self?.updateStatusBarMenu()
-                NotificationCenter.default.post(name: AppDelegate.webcamStateChanged, object: nil)
-                guard failed else { return }
-                let alert = NSAlert()
-                alert.alertStyle = .warning
-                alert.messageText = "Couldn't start the phone webcam"
-                alert.informativeText = tail.isEmpty ? "The webcam script exited with code \(proc.terminationStatus)." : tail
-                alert.runModal()
-            }
-        }
-        do {
-            try p.run()
-            webcamProcess = p
-            updateStatusBarMenu()
-            NotificationCenter.default.post(name: AppDelegate.webcamStateChanged, object: nil)
-        } catch {
-            NSAlert(error: error).runModal()
-        }
-    }
-
     @objc private func openMainWindow(_ sender: Any?) {
+        NSApp.setActivationPolicy(.regular)
         if window == nil {
             setupMainWindow()
         } else {
@@ -353,7 +306,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             connectionManager.adbService.refreshDevices()
             let alert = NSAlert()
             alert.messageText = "No Devices Found"
-            alert.informativeText = "Connect your Android phone via USB with USB Debugging enabled."
+            alert.informativeText = "Connect your Android phone via USB with USB Debugging enabled, or pair via QR code."
             alert.alertStyle = .informational
             alert.runModal()
         }
@@ -361,7 +314,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Devices
 
-    /// "Phones" submenu: every phone adb sees (tick = chosen one) and remembered phones that are offline.
     private func devicesMenuItem() -> NSMenuItem {
         let pairing = DevicePairing.shared
         let sub = NSMenu()
@@ -414,7 +366,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         DevicePairing.shared.forget(r)
     }
 
-    /// Makes `serial` the phone everything talks to (mirror, webcam, files, control link) and connects to it.
+    /// Makes `serial` the active phone and connects to it.
     func selectDevice(serial: String) {
         userDisconnected = false
         let adb = connectionManager.adbService
@@ -437,11 +389,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         ADBService.shared.refreshDevices()
     }
 
-    @objc private func sendHomeButton(_ sender: Any?) {
-        connectionManager.inputForwarder.onSendNavigation?(NavigationPayload(target: .home))
-    }
-
-    @objc private func quitApp(_ sender: Any?) {
+    @objc private func quitCompletely(_ sender: Any?) {
+        allowTermination = true
         NSApp.terminate(nil)
     }
 
@@ -463,6 +412,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.didWakeNotification,
             object: nil
         )
+
+        notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWillPowerOff(_:)),
+            name: NSWorkspace.willPowerOffNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleSystemWillPowerOff(_ notification: Notification) {
+        allowTermination = true
     }
 
     @objc private func handleSystemWillSleep(_ notification: Notification) {

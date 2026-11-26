@@ -2,9 +2,8 @@
  * DroidLink Android Companion Application
  * Copyright (c) 2026 DroidLink Project. All rights reserved.
  *
- * Core connection lifecycle manager providing mDNS/NSD service discovery,
- * WebSocket/TCP control channel server, bidirectional protocol message routing,
- * heartbeat monitoring, and USB ADB port forwarding compatibility.
+ * Core connection lifecycle manager providing mDNS/NSD discovery,
+ * TCP control channel server, heartbeat monitoring, and notification routing.
  */
 
 package com.droidlink.companion.services
@@ -16,19 +15,23 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.droidlink.companion.MainActivity
 import com.droidlink.companion.models.ConnectionState
+import com.droidlink.companion.models.MacWire
 import com.droidlink.companion.models.ProtocolMessage
 import com.droidlink.companion.utils.Constants
 import com.droidlink.companion.utils.Features
-import com.droidlink.companion.utils.DeviceInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,22 +43,20 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.droidlink.companion.models.MacWire
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.floatOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Foreground service acting as the central coordination hub for all DroidLink ecosystem streams.
+ * Foreground service maintaining the control link to forward notifications to the paired Mac.
  */
 class ConnectionService : Service() {
 
@@ -64,16 +65,20 @@ class ConnectionService : Service() {
 
     private lateinit var notificationManager: NotificationManager
     private lateinit var nsdManager: NsdManager
-    private lateinit var deviceInfo: DeviceInfo
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     private var controlServerSocket: ServerSocket? = null
     private var serverJob: Job? = null
     private var heartbeatJob: Job? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
+    private val isPushingToMac = AtomicBoolean(false)
 
-    // Active client control sockets (Mac desktop connections)
     private val activeClients = CopyOnWriteArrayList<Socket>()
     private val activeWriters = CopyOnWriteArrayList<DataOutputStream>()
+    private val clientWriters = java.util.concurrent.ConcurrentHashMap<DataOutputStream, Socket>()
+    private val pendingFrames = ArrayDeque<ByteArray>()
 
     inner class LocalBinder : Binder() {
         fun getService(): ConnectionService = this@ConnectionService
@@ -84,27 +89,35 @@ class ConnectionService : Service() {
         instance = this
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
-        deviceInfo = DeviceInfo(this)
 
         createNotificationChannel()
         startForeground(Constants.NOTIFICATION_ID_CONNECTION, buildForegroundNotification("Ready to connect"))
 
+        acquireWifiLock()
+        registerNetworkCallback()
         startControlServer(Constants.DEFAULT_CONTROL_PORT)
         registerNsdService(Constants.DEFAULT_CONTROL_PORT)
         startHeartbeatLoop()
+
+        synchronized(pendingBeforeStart) {
+            if (pendingBeforeStart.isNotEmpty()) {
+                synchronized(pendingFrames) {
+                    while (pendingBeforeStart.isNotEmpty()) {
+                        if (pendingFrames.size >= MAX_PENDING_FRAMES) pendingFrames.removeFirst()
+                        pendingFrames.addLast(pendingBeforeStart.removeFirst())
+                    }
+                }
+                triggerOutboundMacPush()
+            }
+        }
 
         Log.d(TAG, "ConnectionService created and running")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        Log.d(TAG, "onStartCommand action: $action")
-
         when (action) {
-            ACTION_STOP_RINGING -> stopRinging()
-            Constants.ACTION_DISCONNECT -> {
-                disconnectCurrentClients()
-            }
+            Constants.ACTION_DISCONNECT -> disconnectCurrentClients()
             Constants.ACTION_CONNECT -> {
                 val host = intent.getStringExtra(Constants.EXTRA_TARGET_IP)
                 val port = intent.getIntExtra(Constants.EXTRA_TARGET_PORT, Constants.DEFAULT_CONTROL_PORT)
@@ -119,7 +132,8 @@ class ConnectionService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
-        SmsBridge.unwatch(this)
+        unregisterNetworkCallback()
+        releaseWifiLock()
         unregisterNsdService()
         stopControlServer()
         heartbeatJob?.cancel()
@@ -129,9 +143,6 @@ class ConnectionService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
-    /**
-     * Registers Network Service Discovery (mDNS) so macOS DroidLink can discover phone automatically.
-     */
     private fun registerNsdService(port: Int) {
         val serviceInfo = NsdServiceInfo().apply {
             serviceName = "${Constants.NSD_SERVICE_NAME}-${Build.MODEL.replace(" ", "_")}"
@@ -141,7 +152,7 @@ class ConnectionService : Service() {
 
         registrationListener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
-                Log.i(TAG, "mDNS Service successfully registered: ${info.serviceName} on port ${info.port}")
+                Log.i(TAG, "mDNS Service registered: ${info.serviceName} on port ${info.port}")
             }
 
             override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
@@ -171,9 +182,6 @@ class ConnectionService : Service() {
         }
     }
 
-    /**
-     * Starts the TCP JSON control server on the device.
-     */
     private fun startControlServer(port: Int) {
         serverJob?.cancel()
         serverJob = serviceScope.launch {
@@ -184,7 +192,7 @@ class ConnectionService : Service() {
 
                 while (isActive) {
                     val clientSocket = controlServerSocket?.accept() ?: break
-                    Log.i(TAG, "Accepted incoming Mac control connection from ${clientSocket.inetAddress.hostAddress}")
+                    Log.i(TAG, "Accepted Mac connection from ${clientSocket.inetAddress.hostAddress}")
                     launch {
                         handleClientConnection(clientSocket)
                     }
@@ -204,14 +212,10 @@ class ConnectionService : Service() {
         controlServerSocket = null
     }
 
-    /**
-     * Outbound connection logic for manual IP or QR code pairing.
-     */
     fun connectToHost(host: String, port: Int) {
         serviceScope.launch {
             _connectionState.value = ConnectionState.Connecting(host)
             try {
-                Log.i(TAG, "Initiating outbound connection to $host:$port")
                 val socket = withContext(Dispatchers.IO) { Socket(host, port) }
                 launch {
                     handleClientConnection(socket)
@@ -223,31 +227,39 @@ class ConnectionService : Service() {
         }
     }
 
-    /**
-     * Handles one Mac control connection: length-prefixed JSON envelopes (see MacWire).
-     */
     private suspend fun handleClientConnection(socket: Socket) = withContext(Dispatchers.IO) {
+        runCatching {
+            socket.keepAlive = true
+            socket.tcpNoDelay = true
+        }
         activeClients.add(socket)
         val writer = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
         activeWriters.add(writer)
+        clientWriters[writer] = socket
         val hostAddress = socket.inetAddress.hostAddress ?: "Unknown"
+
+        if (hostAddress != "127.0.0.1" && hostAddress != "::1" && hostAddress != "Unknown") {
+            getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(Constants.PREF_KEY_LAST_MAC_IP, hostAddress)
+                .apply()
+        }
+
+        flushPendingFrames(writer, socket)
 
         try {
             val input = DataInputStream(BufferedInputStream(socket.getInputStream()))
             while (isActive) {
                 val frame = MacWire.readFrame(input) ?: break
-                val envelope = MacWire.decode(frame)
-                if (envelope == null) {
-                    Log.w(TAG, "Undecodable control frame (${frame.size} bytes)")
-                    continue
-                }
+                val envelope = MacWire.decode(frame) ?: continue
                 processIncomingMessage(envelope, hostAddress)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Client socket disconnected or closed: ${e.message}")
+            Log.w(TAG, "Client socket disconnected: ${e.message}")
         } finally {
             activeClients.remove(socket)
             activeWriters.remove(writer)
+            clientWriters.remove(writer)
             runCatching { socket.close() }
 
             if (activeClients.isEmpty()) {
@@ -257,9 +269,6 @@ class ConnectionService : Service() {
         }
     }
 
-    /**
-     * Routes a message from the Mac to the matching subsystem.
-     */
     private fun processIncomingMessage(msg: MacWire.Envelope, remoteHost: String) {
         val p = msg.payload
         when (msg.type) {
@@ -268,108 +277,26 @@ class ConnectionService : Service() {
                 Log.i(TAG, "Handshake from Mac: $macName")
                 _connectionState.value = ConnectionState.Connected(deviceName = macName, hostAddress = remoteHost)
                 updateForegroundNotification("Connected to $macName")
-                lastTelemetry = null // new Mac session gets a fresh status on the next tick
-                // no "tap to start mirroring" prompt: mirroring is started from the Mac's Mirror button (scrcpy)
-                if (ScreenCaptureService.isRunning) ScreenCaptureService.instance?.requestSyncFrame()
             }
             "heartbeat" -> {
-                // Mac only sends heartbeats once connected; covers a missed handshake.
                 if (!_connectionState.value.isConnected) {
                     _connectionState.value = ConnectionState.Connected(deviceName = "Mac", hostAddress = remoteHost)
                 }
                 val rtt = System.currentTimeMillis() - (msg.timestamp * 1000).toLong()
                 _latencyMs.value = rtt.coerceAtLeast(0L)
             }
-            "clipboard_sync" -> if (Features.isOn(this, Features.CLIPBOARD)) p?.str("text")?.let { ClipboardService.applyRemoteClip(it) }
             "notification_reply" -> {
                 val key = p?.str("notificationId") ?: return
                 NotificationListenerService.replyToNotification(key, p.str("replyText") ?: "")
             }
             "notification_dismiss" -> p?.str("notificationId")?.let { NotificationListenerService.dismiss(it) }
-            "touch_event" -> p?.let {
-                InputService.touch(it.int("action") ?: return, it.float("normalizedX") ?: return, it.float("normalizedY") ?: return)
-            }
-            "scroll_event" -> p?.let {
-                InputService.scroll(it.float("normalizedX") ?: return, it.float("normalizedY") ?: return,
-                    it.float("deltaX") ?: 0f, it.float("deltaY") ?: 0f)
-            }
-            "navigation" -> p?.str("target")?.let { InputService.navigate(this, it) }
-            "key_event" -> p?.let {
-                InputService.key(it.int("keyCode") ?: return, it.int("action") ?: return, it.str("character"))
-            }
-            "sms_list" -> pushSmsList()
-            "sms_mark_read" -> {
-                val threadId = p?.str("threadId") ?: return
-                val read = p["read"]?.jsonPrimitive?.booleanOrNull ?: true
-                serviceScope.launch { SmsBridge.markRead(this@ConnectionService, threadId, read) }
-            }
-            "sms_send" -> {
-                val to = p?.str("recipientNumber") ?: return
-                val body = p.str("messageBody") ?: return
-                serviceScope.launch {
-                    // on success the SMS store change pushes a fresh list; on failure push now so the Mac stops waiting
-                    if (!SmsBridge.send(this@ConnectionService, to, body)) SmsBridge.pushList(this@ConnectionService)
-                }
-            }
-            "find_phone" -> ringPhone()
-            "stop_find_phone" -> stopRinging()
-            "mac_status" -> _macStatus.value = p
             "disconnect" -> disconnectCurrentClients()
-            else -> Log.d(TAG, "Unhandled message type: ${msg.type}")
+            else -> Log.d(TAG, "Ignored message type: ${msg.type}")
         }
-    }
-
-    /** Plays the alarm sound for 15 seconds so the phone can be found, even on silent. */
-    private var ringing: android.media.Ringtone? = null
-
-    private fun ringPhone() {
-        stopRinging()
-        val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
-            ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
-        val ringtone = android.media.RingtoneManager.getRingtone(this, uri) ?: return
-        ringtone.audioAttributes = android.media.AudioAttributes.Builder()
-            .setUsage(android.media.AudioAttributes.USAGE_ALARM)
-            .build()
-        ringtone.play()
-        ringing = ringtone
-        // "Found it" notification with a Stop button, so it can be silenced on the phone too
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notificationManager.createNotificationChannel(
-                NotificationChannel(CHANNEL_FIND_PHONE, "Find My Phone", NotificationManager.IMPORTANCE_HIGH)
-            )
-        }
-        val stop = PendingIntent.getService(
-            this, 3, Intent(this, ConnectionService::class.java).setAction(ACTION_STOP_RINGING),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        notificationManager.notify(
-            NOTIFICATION_ID_FIND_PHONE,
-            NotificationCompat.Builder(this, CHANNEL_FIND_PHONE)
-                .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
-                .setContentTitle("Your Mac is looking for this phone")
-                .setContentText("Tap Stop to silence it")
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setContentIntent(stop)
-                .setDeleteIntent(stop)
-                .addAction(0, "Stop", stop)
-                .build()
-        )
-        serviceScope.launch { delay(15_000); if (ringing === ringtone) stopRinging() }
-    }
-
-    private fun stopRinging() {
-        ringing?.stop()
-        ringing = null
-        notificationManager.cancel(NOTIFICATION_ID_FIND_PHONE)
     }
 
     private fun JsonObject.str(key: String) = this[key]?.jsonPrimitive?.content
-    private fun JsonObject.int(key: String) = this[key]?.jsonPrimitive?.intOrNull
-    private fun JsonObject.float(key: String) = this[key]?.jsonPrimitive?.floatOrNull
 
-    /**
-     * Periodic heartbeat loop to monitor link liveness and measure RTT latency.
-     */
     private fun startHeartbeatLoop() {
         heartbeatJob?.cancel()
         heartbeatJob = serviceScope.launch {
@@ -377,45 +304,146 @@ class ConnectionService : Service() {
                 delay(Constants.HEARTBEAT_INTERVAL_MS)
                 if (_connectionState.value.isConnected) {
                     sendProtocolMessage(ProtocolMessage.Heartbeat(System.currentTimeMillis()))
-                    sendDeviceTelemetry()
                 }
             }
         }
     }
 
-    private var lastTelemetry: ProtocolMessage.DeviceStatus? = null
-
-    /** Only sends when something changed: battery/storage move slowly, so most ticks send nothing. */
-    private fun sendDeviceTelemetry() {
-        val telemetry = deviceInfo.getDeviceStatusMessage()
-        if (telemetry == lastTelemetry) return
-        lastTelemetry = telemetry
-        sendProtocolMessage(telemetry)
-    }
-
     fun sendProtocolMessage(message: ProtocolMessage) {
         val body = MacWire.encode(message) ?: return
+        val isNotification = message is ProtocolMessage.NotificationForward
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val wakeLock = if (isNotification) {
+            pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DroidLink:SocketSend")?.apply {
+                setReferenceCounted(false)
+                acquire(4_000L)
+            }
+        } else null
+
         serviceScope.launch(Dispatchers.IO) {
-            for (writer in activeWriters) {
-                runCatching { MacWire.writeFrame(writer, body) }
+            try {
+                var delivered = false
+                for (writer in activeWriters) {
+                    val ok = runCatching { MacWire.writeFrame(writer, body) }.isSuccess
+                    if (ok) {
+                        delivered = true
+                    } else {
+                        activeWriters.remove(writer)
+                        clientWriters.remove(writer)?.let { deadSocket ->
+                            activeClients.remove(deadSocket)
+                            runCatching { deadSocket.close() }
+                        }
+                    }
+                }
+                if (!delivered && isNotification) {
+                    enqueuePendingFrame(body)
+                    triggerOutboundMacPush()
+                }
+            } finally {
+                if (wakeLock?.isHeld == true) {
+                    runCatching { wakeLock.release() }
+                }
             }
         }
     }
 
-    /** Sends a payload the Mac knows by type name only (no ProtocolMessage class). */
-    fun sendRaw(type: String, payload: JsonObject?) {
-        val body = MacWire.encodeRaw(type, payload)
-        serviceScope.launch(Dispatchers.IO) {
-            for (writer in activeWriters) {
-                runCatching { MacWire.writeFrame(writer, body) }
+    private fun enqueuePendingFrame(body: ByteArray) {
+        synchronized(pendingFrames) {
+            if (pendingFrames.size >= MAX_PENDING_FRAMES) {
+                pendingFrames.removeFirst()
+            }
+            pendingFrames.addLast(body)
+        }
+    }
+
+    private fun flushPendingFrames(writer: DataOutputStream, socket: Socket) {
+        val toSend = mutableListOf<ByteArray>()
+        synchronized(pendingFrames) {
+            while (pendingFrames.isNotEmpty()) {
+                toSend.add(pendingFrames.removeFirst())
+            }
+        }
+        for (frame in toSend) {
+            val ok = runCatching { MacWire.writeFrame(writer, frame) }.isSuccess
+            if (!ok) {
+                enqueuePendingFrame(frame)
+                activeWriters.remove(writer)
+                clientWriters.remove(writer)
+                activeClients.remove(socket)
+                runCatching { socket.close() }
+                break
             }
         }
     }
 
-    /** Reads SMS off the main thread and sends the list to the Mac, if one is connected. */
-    fun pushSmsList() {
-        if (activeWriters.isEmpty()) return
-        serviceScope.launch { SmsBridge.pushList(this@ConnectionService) }
+    private fun triggerOutboundMacPush() {
+        val lastMacIp = getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(Constants.PREF_KEY_LAST_MAC_IP, null)
+            ?.takeIf { it.isNotBlank() } ?: return
+        if (!isPushingToMac.compareAndSet(false, true)) return
+
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val socket = Socket()
+                socket.connect(InetSocketAddress(lastMacIp, Constants.MAC_NOTIFICATION_PORT), 3_000)
+                Log.i(TAG, "Outbound push connected to Mac $lastMacIp:${Constants.MAC_NOTIFICATION_PORT}")
+                handleClientConnection(socket)
+            } catch (e: Exception) {
+                Log.d(TAG, "Outbound push to $lastMacIp:${Constants.MAC_NOTIFICATION_PORT} failed: ${e.message}")
+            } finally {
+                isPushingToMac.set(false)
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun acquireWifiLock() {
+        runCatching {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wifiLock = wm.createWifiLock(mode, "DroidLink:WifiLock").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }.onFailure { Log.w(TAG, "Failed to acquire WifiLock", it) }
+    }
+
+    private fun releaseWifiLock() {
+        runCatching {
+            if (wifiLock?.isHeld == true) wifiLock?.release()
+            wifiLock = null
+        }
+    }
+
+    private fun registerNetworkCallback() {
+        runCatching {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+            connectivityManager = cm
+            val cb = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    if (registrationListener == null) {
+                        registerNsdService(Constants.DEFAULT_CONTROL_PORT)
+                    }
+                    val hasPending = synchronized(pendingFrames) { pendingFrames.isNotEmpty() }
+                    if (hasPending && activeWriters.isEmpty()) {
+                        triggerOutboundMacPush()
+                    }
+                }
+            }
+            networkCallback = cb
+            cm.registerDefaultNetworkCallback(cb)
+        }.onFailure { Log.w(TAG, "Failed to register network callback", it) }
+    }
+
+    private fun unregisterNetworkCallback() {
+        networkCallback?.let { cb ->
+            runCatching { connectivityManager?.unregisterNetworkCallback(cb) }
+            networkCallback = null
+        }
     }
 
     fun disconnectCurrentClients() {
@@ -424,7 +452,6 @@ class ConnectionService : Service() {
         }
         activeClients.clear()
         activeWriters.clear()
-        _macStatus.value = null
         _connectionState.value = ConnectionState.Disconnected
         updateForegroundNotification("Not Connected")
     }
@@ -436,7 +463,7 @@ class ConnectionService : Service() {
                 "DroidLink Connection",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows active companion connection status"
+                description = "Shows active notification bridge connection status"
             }
             notificationManager.createNotificationChannel(channel)
         }
@@ -451,7 +478,7 @@ class ConnectionService : Service() {
         )
 
         return NotificationCompat.Builder(this, Constants.CHANNEL_ID_CONNECTION)
-            .setContentTitle("DroidLink Companion")
+            .setContentTitle("DroidLink Notifications")
             .setContentText(statusText)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentIntent(pendingIntent)
@@ -468,9 +495,8 @@ class ConnectionService : Service() {
 
     companion object {
         private const val TAG = "ConnectionService"
-        private const val ACTION_STOP_RINGING = "com.droidlink.companion.STOP_RINGING"
-        private const val CHANNEL_FIND_PHONE = "droidlink_channel_find_phone"
-        private const val NOTIFICATION_ID_FIND_PHONE = 1005
+        private const val MAX_PENDING_FRAMES = 25
+        private val pendingBeforeStart = ArrayDeque<ByteArray>()
 
         @Volatile
         var instance: ConnectionService? = null
@@ -482,22 +508,23 @@ class ConnectionService : Service() {
         private val _latencyMs = MutableStateFlow<Long>(0L)
         val latencyMs: StateFlow<Long> = _latencyMs.asStateFlow()
 
-        /** Latest `mac_status` payload from the Mac (battery, storage, volume), null until one arrives. */
-        private val _macStatus = MutableStateFlow<JsonObject?>(null)
-        val macStatus: StateFlow<JsonObject?> = _macStatus.asStateFlow()
+        fun hasActiveClients(): Boolean = instance?.activeWriters?.isNotEmpty() == true
 
-        /**
-         * Global entry point for other services (Notifications, Clipboard, Calls) to broadcast messages.
-         */
         fun broadcastProtocolMessage(message: ProtocolMessage) {
-            val service = instance ?: return
-            // features switched off on the Status screen send nothing to the Mac
+            val service = instance
+            if (service == null) {
+                if (message is ProtocolMessage.NotificationForward) {
+                    MacWire.encode(message)?.let { frame ->
+                        synchronized(pendingBeforeStart) {
+                            if (pendingBeforeStart.size >= MAX_PENDING_FRAMES) pendingBeforeStart.removeFirst()
+                            pendingBeforeStart.addLast(frame)
+                        }
+                    }
+                }
+                return
+            }
             Features.keyFor(message)?.let { if (!Features.isOn(service, it)) return }
             service.sendProtocolMessage(message)
-        }
-
-        fun updateState(state: ConnectionState) {
-            _connectionState.value = state
         }
     }
 }

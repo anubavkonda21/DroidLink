@@ -8,7 +8,6 @@
 
 import Foundation
 import Network
-import CoreMedia
 
 /// Represents the connection state machine of DroidLink.
 public enum ConnectionStatus: Equatable {
@@ -16,17 +15,12 @@ public enum ConnectionStatus: Equatable {
     case discovering
     case connecting(String)
     case connected(DeviceInfo)
-    case mirroring(DeviceInfo)
     case reconnecting(attempt: Int)
     case error(String)
 
-    public var isConnectedOrMirroring: Bool {
-        switch self {
-        case .connected, .mirroring:
-            return true
-        default:
-            return false
-        }
+    public var isConnected: Bool {
+        if case .connected = self { return true }
+        return false
     }
 
     public var statusTitle: String {
@@ -39,11 +33,9 @@ public enum ConnectionStatus: Equatable {
             return "Connecting to \(name)..."
         case .connected(let info):
             return "Connected (\(info.name))"
-        case .mirroring(let info):
-            return "Mirroring \(info.name)"
         case .reconnecting(let attempt):
             return "Reconnecting (Attempt \(attempt))..."
-        case .error: // raw error text stays out of the UI
+        case .error:
             return "Can't reach the phone"
         }
     }
@@ -56,8 +48,8 @@ extension ConnectionManager {
     public static let didChangeSettingsNotification = Notification.Name("ConnectionManagerDidChangeSettingsNotification")
 }
 
-/// Central connection orchestrator managing TCP/WebSocket channels, heartbeats,
-/// and dispatching video/audio/control packets to corresponding services.
+/// Central connection orchestrator managing the control channel, heartbeats,
+/// and routing Android notifications & user replies/dismissals.
 public final class ConnectionManager: @unchecked Sendable {
     // MARK: - State
 
@@ -71,7 +63,7 @@ public final class ConnectionManager: @unchecked Sendable {
             NotificationCenter.default.post(name: ConnectionManager.didChangeDeviceInfoNotification, object: self)
         }
     }
-    public var latencyMs: Int = 18 {
+    public var latencyMs: Int = 0 {
         didSet {
             NotificationCenter.default.post(name: ConnectionManager.didChangeLatencyNotification, object: self)
         }
@@ -85,28 +77,18 @@ public final class ConnectionManager: @unchecked Sendable {
     // MARK: - Attached Services
 
     public let adbService: ADBService
-    public let videoDecoder: VideoDecoder
-    public let metalRenderer: MetalRenderer
-    public let audioPlayer: AudioPlayer
-    public let clipboardSync: ClipboardSync
     public let notificationBridge: NotificationBridge
-    public let fileTransferService: FileTransferService
-    public let inputForwarder: InputForwarder
     public let deviceDiscovery: DeviceDiscovery
 
     // MARK: - Networking State
 
     private var controlConnection: NWConnection?
-    private var videoConnection: NWConnection?
-    private var videoRetryDelay: TimeInterval = 2
-    private var audioConnection: NWConnection?
-
+    private var incomingListener: NWListener?
     private let networkQueue = DispatchQueue(label: "com.droidlink.connectionmanager.network", qos: .userInteractive)
     private var heartbeatTimer: Timer?
-    private var lastSentStatus: MacStatusPayload?
     private var reconnectAttempt = 0
+    private var lastBonjourServiceName: String?
 
-    // Stream buffers
     private var incomingControlBuffer = Data()
 
     // MARK: - Shared Instance
@@ -117,54 +99,20 @@ public final class ConnectionManager: @unchecked Sendable {
 
     public init(
         adbService: ADBService = .shared,
-        metalRenderer: MetalRenderer = MetalRenderer(),
-        videoDecoder: VideoDecoder = VideoDecoder(),
-        audioPlayer: AudioPlayer = AudioPlayer(),
-        clipboardSync: ClipboardSync = .shared,
         notificationBridge: NotificationBridge = .shared,
-        fileTransferService: FileTransferService = .shared,
-        inputForwarder: InputForwarder = .shared,
         deviceDiscovery: DeviceDiscovery = .shared
     ) {
         self.adbService = adbService
-        self.metalRenderer = metalRenderer
-        self.videoDecoder = videoDecoder
-        self.audioPlayer = audioPlayer
-        self.clipboardSync = clipboardSync
         self.notificationBridge = notificationBridge
-        self.fileTransferService = fileTransferService
-        self.inputForwarder = inputForwarder
         self.deviceDiscovery = deviceDiscovery
 
         setupServiceBridges()
+        startIncomingListener()
     }
 
     // MARK: - Service Interconnections
 
     private func setupServiceBridges() {
-        // 1. Decoder outputs pixel buffer -> MetalRenderer
-        self.videoDecoder.delegate = self
-
-        // 2. Input forwarder sends touch / key / scroll -> Control channel
-        self.inputForwarder.onSendTouchEvent = { [weak self] payload in
-            self?.sendControlMessage(type: .touchEvent, payload: payload)
-        }
-        self.inputForwarder.onSendKeyEvent = { [weak self] payload in
-            self?.sendControlMessage(type: .keyEvent, payload: payload)
-        }
-        self.inputForwarder.onSendScrollEvent = { [weak self] payload in
-            self?.sendControlMessage(type: .scrollEvent, payload: payload)
-        }
-        self.inputForwarder.onSendNavigation = { [weak self] payload in
-            self?.sendControlMessage(type: .navigation, payload: payload)
-        }
-
-        // 3. Local clipboard changed -> Send to Android
-        self.clipboardSync.onLocalClipboardChanged = { [weak self] payload in
-            self?.sendControlMessage(type: .clipboardSync, payload: payload)
-        }
-
-        // 4. Notification actions -> Send to Android
         self.notificationBridge.onReply = { [weak self] payload in
             self?.sendControlMessage(type: .notificationReply, payload: payload)
         }
@@ -175,22 +123,32 @@ public final class ConnectionManager: @unchecked Sendable {
 
     // MARK: - Connection Lifecycle
 
-    /// Initiates connection to a specific device (via USB ADB or Wi-Fi IP)
-    public func connect(to device: DiscoveredDevice) {
+    /// Initiates connection to a specific device (via USB/Wi-Fi ADB, LAN IP, or Bonjour service).
+    public func connect(to device: DiscoveredDevice, preserveReconnectAttempt: Bool = false) {
         status = .connecting(device.name)
-        reconnectAttempt = 0
+        if !preserveReconnectAttempt {
+            reconnectAttempt = 0
+        }
 
         Task {
             do {
-                // Prefer the Wi-Fi adb serial ("ip:port") so the link survives unplugging the cable
                 let ready = adbService.devices.filter { $0.state == .device }
                 let chosen = ready.first { $0.serial == device.adbSerial || $0.serial == adbService.selectedDevice?.serial }?.serial
-                if let serial = chosen ?? ready.first(where: { $0.serial.contains(":") })?.serial ?? device.adbSerial ?? ready.first?.serial {
-                    // USB / ADB transport (preferred)
+                if let serial = chosen ?? ready.first(where: { $0.serial.contains(":") })?.serial ?? device.adbSerial ?? ready.first?.serial,
+                   ready.contains(where: { $0.serial == serial }) {
                     try await connectViaAdb(serial: serial)
                 } else if let ip = device.ipAddress, let port = device.port {
-                    // Wi-Fi transport
-                    try await connectViaNetwork(host: ip, port: port)
+                    try await connectViaNetwork(host: ip, port: port, deviceName: device.name, bonjourName: device.bonjourServiceName)
+                } else if let svcName = device.bonjourServiceName {
+                    connectViaBonjour(serviceName: svcName, deviceName: device.name)
+                } else if let wifiFallback = deviceDiscovery.discoveredDevices.first(where: {
+                    $0.transport == .mdnsWifi && ($0.ipAddress != nil || $0.bonjourServiceName != nil)
+                }) {
+                    if let ip = wifiFallback.ipAddress, let port = wifiFallback.port {
+                        try await connectViaNetwork(host: ip, port: port, deviceName: wifiFallback.name, bonjourName: wifiFallback.bonjourServiceName)
+                    } else if let svcName = wifiFallback.bonjourServiceName {
+                        connectViaBonjour(serviceName: svcName, deviceName: wifiFallback.name)
+                    }
                 } else {
                     throw NSError(
                         domain: "ConnectionManager",
@@ -199,8 +157,9 @@ public final class ConnectionManager: @unchecked Sendable {
                     )
                 }
             } catch {
+                self.adbService.refreshDevices()
                 if self.reconnectAttempt > 0 && self.currentDeviceInfo != nil {
-                    self.handleConnectionFailure(error: error) // phone not reachable yet: keep retrying
+                    self.handleConnectionFailure(error: error)
                 } else {
                     DispatchQueue.main.async {
                         self.status = .error(error.localizedDescription)
@@ -210,39 +169,33 @@ public final class ConnectionManager: @unchecked Sendable {
         }
     }
 
-    /// Connects via ADB port forwarding
+    /// Connects via ADB port forwarding on the control port (8080)
     private func connectViaAdb(serial: String) async throws {
         let localControlPort: UInt16 = 8080
-        let localVideoPort: UInt16 = 8081
-        let localAudioPort: UInt16 = 8083
-
-        // Forward ADB ports (matching Companion app Constants.kt)
         try await adbService.forwardPort(local: localControlPort, remote: 8080, serial: serial)
-        try await adbService.forwardPort(local: localVideoPort, remote: 8081, serial: serial)
-        try await adbService.forwardPort(local: localAudioPort, remote: 8083, serial: serial)
 
-        // Query real device telemetry
         let info = try await adbService.fetchDeviceInfo(serial: serial)
+        lastBonjourServiceName = nil
 
         DispatchQueue.main.async {
             self.currentDeviceInfo = info
-            self.inputForwarder.updateTargetDimensions(width: info.screenWidth, height: info.screenHeight)
         }
 
-        // Establish TCP sockets
-        startSockets(host: "127.0.0.1", controlPort: localControlPort, videoPort: localVideoPort, audioPort: localAudioPort, info: info)
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host("127.0.0.1"), port: NWEndpoint.Port(rawValue: localControlPort)!)
+        startControlSocket(endpoint: endpoint, info: info)
     }
 
-    /// Connects directly over local Wi-Fi TCP
-    private func connectViaNetwork(host: String, port: UInt16) async throws {
+    /// Connects directly over local Wi-Fi TCP using resolved IP and port
+    private func connectViaNetwork(host: String, port: UInt16, deviceName: String = "Android Phone", bonjourName: String? = nil) async throws {
+        lastBonjourServiceName = bonjourName
         let info = DeviceInfo(
             id: "\(host):\(port)",
-            name: "Android Device (Wi-Fi)",
-            model: "Wi-Fi Android Device",
+            name: deviceName,
+            model: deviceName,
             androidVersion: "Android",
             batteryLevel: 100,
-            storageTotal: 256_000_000_000,
-            storageFree: 54_000_000_000,
+            storageTotal: 0,
+            storageFree: 0,
             isCharging: false,
             wifiName: "Wi-Fi",
             ipAddress: host,
@@ -253,15 +206,54 @@ public final class ConnectionManager: @unchecked Sendable {
         )
         DispatchQueue.main.async {
             self.currentDeviceInfo = info
-            self.inputForwarder.updateTargetDimensions(width: info.screenWidth, height: info.screenHeight)
         }
 
-        startSockets(host: host, controlPort: port, videoPort: port + 1, audioPort: port + 2, info: info)
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
+        startControlSocket(endpoint: endpoint, info: info)
     }
 
-    private func startSockets(host: String, controlPort: UInt16, videoPort: UInt16, audioPort: UInt16, info: DeviceInfo) {
-        let controlEndpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: controlPort)!)
-        let conn = NWConnection(to: controlEndpoint, using: .tcp)
+    /// Connects directly to a Bonjour service endpoint (lets Network.framework handle address resolution)
+    private func connectViaBonjour(serviceName: String, deviceName: String) {
+        lastBonjourServiceName = serviceName
+        let info = DeviceInfo(
+            id: "bonjour_\(serviceName)",
+            name: deviceName,
+            model: deviceName,
+            androidVersion: "Android",
+            batteryLevel: 100,
+            storageTotal: 0,
+            storageFree: 0,
+            isCharging: false,
+            wifiName: "Wi-Fi",
+            ipAddress: nil,
+            screenWidth: 1080,
+            screenHeight: 2400,
+            screenDpi: 420,
+            connectionType: .wifi
+        )
+        DispatchQueue.main.async {
+            self.currentDeviceInfo = info
+        }
+
+        let endpoint = NWEndpoint.service(name: serviceName, type: "_droidlink._tcp", domain: "local.", interface: nil)
+        startControlSocket(endpoint: endpoint, info: info)
+    }
+
+    private func startControlSocket(endpoint: NWEndpoint, info: DeviceInfo) {
+        controlConnection?.stateUpdateHandler = nil
+        controlConnection?.cancel()
+        controlConnection = nil
+        incomingControlBuffer.removeAll()
+
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.enableKeepalive = true
+        tcpOptions.keepaliveIdle = 60
+        tcpOptions.keepaliveInterval = 15
+        tcpOptions.keepaliveCount = 3
+        let params = NWParameters(tls: nil, tcp: tcpOptions)
+        params.includePeerToPeer = true
+
+        let conn = NWConnection(to: endpoint, using: params)
 
         conn.stateUpdateHandler = { [weak self] state in
             guard let self = self else { return }
@@ -269,9 +261,8 @@ public final class ConnectionManager: @unchecked Sendable {
             case .ready:
                 DispatchQueue.main.async {
                     self.reconnectAttempt = 0
-                    self.status = .mirroring(info)
+                    self.status = .connected(info)
                     self.startHeartbeat()
-                    // audio engine starts on the first audio packet; an idle running engine keeps CoreAudio busy
                 }
                 self.receiveNextControlPacket()
                 self.sendHandshake()
@@ -288,71 +279,61 @@ public final class ConnectionManager: @unchecked Sendable {
 
         conn.start(queue: networkQueue)
         self.controlConnection = conn
-
-        // Start video and audio sockets
-        videoRetryDelay = 2
-        startVideoSocket(host: host, port: videoPort)
-        startAudioSocket(host: host, port: audioPort)
     }
 
-    private func startVideoSocket(host: String, port: UInt16) {
-        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
-        let conn = NWConnection(to: endpoint, using: .tcp)
-        conn.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .ready:
-                self?.receiveVideoData(conn, host: host, port: port)
-            case .failed:
-                self?.retryVideoSocket(after: conn, host: host, port: port)
-            default:
-                break
+    // MARK: - Incoming Push Listener (Android screen-off fallback)
+
+    private func startIncomingListener() {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        params.includePeerToPeer = true
+        guard let port = NWEndpoint.Port(rawValue: 8081),
+              let listener = try? NWListener(using: params, on: port) else { return }
+
+        listener.newConnectionHandler = { [weak self] conn in
+            self?.handleIncomingPushConnection(conn)
+        }
+        listener.start(queue: networkQueue)
+        self.incomingListener = listener
+    }
+
+    private func handleIncomingPushConnection(_ conn: NWConnection) {
+        var buffer = Data()
+        func receiveLoop() {
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+                if let data = data, !data.isEmpty {
+                    buffer.append(data)
+                    let packets = ProtocolFramer.deframe(buffer: &buffer)
+                    for packet in packets {
+                        self?.dispatchControlPacket(packet)
+                    }
+                }
+                if isComplete || error != nil {
+                    conn.cancel()
+                } else {
+                    receiveLoop()
+                }
+            }
+        }
+        conn.stateUpdateHandler = { state in
+            if case .ready = state {
+                receiveLoop()
+            } else if case .failed = state {
+                conn.cancel()
             }
         }
         conn.start(queue: networkQueue)
-        self.videoConnection = conn
-    }
-
-    /// The phone only serves video once the user approves screen capture there, which can be after
-    /// the Mac connects; keep retrying while the control channel is up.
-    /// Backs off 2 s -> 5 min: each attempt goes through adb to the phone and wakes its Wi-Fi radio,
-    /// and with mirroring done by scrcpy the phone usually never serves this port.
-    private func retryVideoSocket(after old: NWConnection, host: String, port: UInt16) {
-        let delay = videoRetryDelay
-        videoRetryDelay = min(videoRetryDelay * 2, 300)
-        networkQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self = self, self.controlConnection != nil, self.videoConnection === old else { return }
-            old.cancel()
-            self.videoDecoder.reset()
-            self.startVideoSocket(host: host, port: port)
-        }
-    }
-
-    private func startAudioSocket(host: String, port: UInt16) {
-        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
-        let conn = NWConnection(to: endpoint, using: .tcp)
-        conn.stateUpdateHandler = { [weak self] state in
-            if state == .ready {
-                self?.receiveAudioData()
-            }
-        }
-        conn.start(queue: networkQueue)
-        self.audioConnection = conn
     }
 
     // MARK: - Disconnection
 
     public func disconnect() {
         stopHeartbeat()
+        controlConnection?.stateUpdateHandler = nil
         controlConnection?.cancel()
-        videoConnection?.cancel()
-        audioConnection?.cancel()
-
         controlConnection = nil
-        videoConnection = nil
-        audioConnection = nil
-
-        audioPlayer.stop()
-        videoDecoder.reset()
+        incomingControlBuffer.removeAll()
+        lastBonjourServiceName = nil
 
         status = .disconnected
         currentDeviceInfo = nil
@@ -387,28 +368,10 @@ public final class ConnectionManager: @unchecked Sendable {
             let envelope = try decoder.decode(ProtocolMessageEnvelope.self, from: data)
 
             switch envelope.type {
-            case .clipboardSync:
-                let payload = try envelope.decodePayload(ClipboardPayload.self)
-                clipboardSync.receiveRemoteClipboard(payload: payload)
             case .notificationPost:
                 let notification = try envelope.decodePayload(AndroidNotification.self)
                 notificationBridge.receiveNotification(notification)
-            case .fileTransferInit:
-                // Phone saved the file in its Downloads; pull it over adb (USB or wireless adb)
-                let offer = try envelope.decodePayload(FileTransferInitPayload.self)
-                let remotePath = (offer.destinationFolder as NSString).appendingPathComponent(offer.fileName)
-                fileTransferService.pullFile(remotePath: remotePath, fileSize: offer.fileSize)
-            case .smsList:
-                SMSStore.shared.apply(try envelope.decodePayload(SMSListPayload.self))
-            case .macCommand:
-                let command = try envelope.decodePayload(MacCommandPayload.self)
-                DispatchQueue.main.async {
-                    MacStatus.perform(command.action)
-                    // let volume/mute changes show up on the phone right away
-                    self.sendControlMessage(type: .macStatus, payload: MacStatus.current())
-                }
             case .heartbeat:
-                // Calculate RTT
                 let now = Date().timeIntervalSince1970
                 let rtt = Int((now - envelope.timestamp) * 1000)
                 DispatchQueue.main.async {
@@ -419,38 +382,6 @@ public final class ConnectionManager: @unchecked Sendable {
             }
         } catch {
             print("Failed to dispatch control packet: \(error)")
-        }
-    }
-
-    private func receiveVideoData(_ conn: NWConnection, host: String, port: UInt16) {
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 131072) { [weak self] data, _, isComplete, error in
-            guard let self = self else { return }
-
-            if let data = data, !data.isEmpty {
-                self.videoRetryDelay = 2
-                self.videoDecoder.processRawStreamData(data)
-            }
-
-            if isComplete || error != nil {
-                self.retryVideoSocket(after: conn, host: host, port: port)
-            } else {
-                self.receiveVideoData(conn, host: host, port: port)
-            }
-        }
-    }
-
-    private func receiveAudioData() {
-        audioConnection?.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, isComplete, error in
-            guard let self = self else { return }
-
-            if let data = data, !data.isEmpty {
-                self.audioPlayer.start() // no-op once running
-                self.audioPlayer.scheduleRawPCM16(data: data)
-            }
-
-            if !isComplete && error == nil {
-                self.receiveAudioData()
-            }
         }
     }
 
@@ -479,24 +410,17 @@ public final class ConnectionManager: @unchecked Sendable {
 
     private func startHeartbeat() {
         stopHeartbeat()
-        lastSentStatus = nil
-        // 15 s (was 5 s): each ping wakes the phone's Wi-Fi radio; TCP close still detects drops right away.
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             let envelope = ProtocolMessageEnvelope(type: .heartbeat)
             if let data = try? JSONEncoder().encode(envelope) {
                 let framed = ProtocolFramer.frame(data: data)
                 self.controlConnection?.send(content: framed, completion: .idempotent)
             }
-            // mac_status only when it changed (battery, volume, storage)
-            let status = MacStatus.current()
-            if status != self.lastSentStatus {
-                self.lastSentStatus = status
-                self.sendControlMessage(type: .macStatus, payload: status)
-            }
         }
-        heartbeatTimer?.tolerance = 3
-        heartbeatTimer?.fire() // phone's MacBook card fills in right away
+        timer.tolerance = 15.0
+        heartbeatTimer = timer
+        timer.fire()
     }
 
     private func stopHeartbeat() {
@@ -508,7 +432,12 @@ public final class ConnectionManager: @unchecked Sendable {
 
     private func handleConnectionFailure(error: Error?) {
         stopHeartbeat()
-        // Never give up while a device is known: back off 2s, 4s, 8s, 16s, then every 30s
+        controlConnection?.stateUpdateHandler = nil
+        controlConnection?.cancel()
+        controlConnection = nil
+        incomingControlBuffer.removeAll()
+        adbService.refreshDevices()
+
         reconnectAttempt += 1
         let delay = min(30, pow(2.0, Double(reconnectAttempt)))
 
@@ -518,28 +447,39 @@ public final class ConnectionManager: @unchecked Sendable {
 
         networkQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self = self, let device = self.currentDeviceInfo else { return }
-            let discDevice = DiscoveredDevice(
-                id: device.id,
-                name: device.name,
-                model: device.model,
-                transport: device.connectionType == .usb ? .usb : .wirelessAdb,
-                adbSerial: device.id
-            )
-            let attempt = self.reconnectAttempt
-            self.connect(to: discDevice)
-            self.reconnectAttempt = attempt // connect() resets it; keep the backoff going until a connection succeeds
+
+            // If USB cable was unplugged, switch immediately to any discovered Wi-Fi / Bonjour device
+            if let wifiFallback = self.deviceDiscovery.discoveredDevices.first(where: {
+                $0.transport == .wirelessAdb || $0.transport == .mdnsWifi
+            }), !self.adbService.devices.contains(where: { $0.serial == device.id && $0.state == .device }) {
+                self.connect(to: wifiFallback, preserveReconnectAttempt: true)
+                return
+            }
+
+            let discDevice: DiscoveredDevice
+            if device.connectionType == .wifi {
+                let port: UInt16? = device.ipAddress != nil
+                    ? UInt16(device.id.split(separator: ":").last.flatMap { UInt16($0) } ?? 8080)
+                    : nil
+                discDevice = DiscoveredDevice(
+                    id: device.id,
+                    name: device.name,
+                    model: device.model,
+                    transport: .mdnsWifi,
+                    ipAddress: device.ipAddress,
+                    port: port,
+                    bonjourServiceName: self.lastBonjourServiceName
+                )
+            } else {
+                discDevice = DiscoveredDevice(
+                    id: device.id,
+                    name: device.name,
+                    model: device.model,
+                    transport: device.connectionType == .usb ? .usb : .wirelessAdb,
+                    adbSerial: device.id
+                )
+            }
+            self.connect(to: discDevice, preserveReconnectAttempt: true)
         }
-    }
-}
-
-// MARK: - VideoDecoderDelegate
-
-extension ConnectionManager: VideoDecoderDelegate {
-    public func videoDecoder(_ decoder: VideoDecoder, didOutputPixelBuffer pixelBuffer: CVPixelBuffer, presentationTimestamp: CMTime) {
-        metalRenderer.feedPixelBuffer(pixelBuffer)
-    }
-
-    public func videoDecoder(_ decoder: VideoDecoder, didFailWithError error: Error) {
-        print("Video decoding error: \(error)")
     }
 }

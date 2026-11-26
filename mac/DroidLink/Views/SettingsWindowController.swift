@@ -7,15 +7,16 @@
 //
 
 import AppKit
+import ServiceManagement
 
-/// Window controller hosting the multi-tab settings interface.
+/// Window controller hosting notification and connection preferences.
 public final class SettingsWindowController: NSWindowController {
     public static let shared = SettingsWindowController()
 
     public init() {
         let tabViewController = SettingsTabViewController()
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 460),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -43,37 +44,22 @@ public final class SettingsTabViewController: NSTabViewController {
         super.viewDidLoad()
         tabStyle = .toolbar
 
-        let generalVC = GeneralSettingsViewController()
-        let mirrorVC = MirrorSettingsViewController()
-        let clipboardVC = ClipboardSettingsViewController()
         let notificationVC = NotificationSettingsViewController()
-        let fileVC = FileSettingsViewController()
+        let generalVC = GeneralSettingsViewController()
         let aboutVC = AboutSettingsViewController()
 
-        addTabViewItem(NSTabViewItem(viewController: generalVC))
-        addTabViewItem(NSTabViewItem(viewController: mirrorVC))
-        addTabViewItem(NSTabViewItem(viewController: clipboardVC))
         addTabViewItem(NSTabViewItem(viewController: notificationVC))
-        addTabViewItem(NSTabViewItem(viewController: fileVC))
+        addTabViewItem(NSTabViewItem(viewController: generalVC))
         addTabViewItem(NSTabViewItem(viewController: aboutVC))
 
-        tabViewItems[0].label = "General"
-        tabViewItems[0].image = NSImage(systemSymbolName: "gear", accessibilityDescription: "General")
+        tabViewItems[0].label = "Notifications"
+        tabViewItems[0].image = NSImage(systemSymbolName: "bell", accessibilityDescription: "Notifications")
 
-        tabViewItems[1].label = "Mirroring"
-        tabViewItems[1].image = NSImage(systemSymbolName: "display", accessibilityDescription: "Mirroring")
+        tabViewItems[1].label = "General"
+        tabViewItems[1].image = NSImage(systemSymbolName: "gear", accessibilityDescription: "General")
 
-        tabViewItems[2].label = "Clipboard"
-        tabViewItems[2].image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Clipboard")
-
-        tabViewItems[3].label = "Notifications"
-        tabViewItems[3].image = NSImage(systemSymbolName: "bell", accessibilityDescription: "Notifications")
-
-        tabViewItems[4].label = "Files"
-        tabViewItems[4].image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Files")
-
-        tabViewItems[5].label = "About"
-        tabViewItems[5].image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "About")
+        tabViewItems[2].label = "About"
+        tabViewItems[2].image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "About")
     }
 }
 
@@ -106,15 +92,17 @@ public final class GeneralSettingsViewController: NSViewController {
             target: self,
             action: #selector(autoConnectToggled(_:))
         )
-        autoConnectButton.state = UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.autoConnect) ? .on : .off
+        let savedAuto = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.autoConnect) as? Bool ?? true
+        autoConnectButton.state = savedAuto ? .on : .off
         stack.addArrangedSubview(autoConnectButton)
 
         launchAtLoginButton = NSButton(
-            checkboxWithTitle: "Launch DroidLink at system startup",
+            checkboxWithTitle: "Launch DroidLink in background at login",
             target: self,
             action: #selector(launchAtLoginToggled(_:))
         )
-        launchAtLoginButton.state = UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.launchAtLogin) ? .on : .off
+        let isRegistered = SMAppService.mainApp.status == .enabled
+        launchAtLoginButton.state = isRegistered ? .on : .off
         stack.addArrangedSubview(launchAtLoginButton)
 
         let connRow = NSStackView()
@@ -140,7 +128,17 @@ public final class GeneralSettingsViewController: NSViewController {
     }
 
     @objc private func launchAtLoginToggled(_ sender: NSButton) {
-        UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.launchAtLogin)
+        let enable = sender.state == .on
+        UserDefaults.standard.set(enable, forKey: MirrorSettings.StorageKeys.launchAtLogin)
+        do {
+            if enable {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            print("Launch at login update failed: \(error)")
+        }
     }
 
     @objc private func connectionChanged(_ sender: NSPopUpButton) {
@@ -150,197 +148,16 @@ public final class GeneralSettingsViewController: NSViewController {
     }
 }
 
-// MARK: - Mirroring Settings Tab
-
-public final class MirrorSettingsViewController: NSViewController {
-    private var resolutionPopUp: NSPopUpButton!
-    private var fpsSegment: NSSegmentedControl!
-    private var codecPopUp: NSPopUpButton!
-    private var bitrateSlider: NSSlider!
-    private var bitrateLabel: NSTextField!
-    private var audioCheckBox: NSSwitch!
-    private var screenOffCheckBox: NSSwitch!
-
-    public override func loadView() {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 350))
-        self.view = view
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 14
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32)
-        ])
-
-        // Resolution
-        let resRow = NSStackView()
-        resRow.orientation = .horizontal
-        resRow.spacing = 12
-        resRow.addArrangedSubview(NSTextField(labelWithString: "Max Resolution:"))
-        resolutionPopUp = NSPopUpButton()
-        resolutionPopUp.addItems(withTitles: ResolutionOption.allCases.map { $0.rawValue })
-        let savedRes = UserDefaults.standard.string(forKey: MirrorSettings.StorageKeys.maxResolution) ?? ResolutionOption.native.rawValue
-        resolutionPopUp.selectItem(withTitle: savedRes)
-        resolutionPopUp.target = self
-        resolutionPopUp.action = #selector(resolutionChanged(_:))
-        resRow.addArrangedSubview(resolutionPopUp)
-        stack.addArrangedSubview(resRow)
-
-        // FPS
-        let fpsRow = NSStackView()
-        fpsRow.orientation = .horizontal
-        fpsRow.spacing = 12
-        fpsRow.addArrangedSubview(NSTextField(labelWithString: "Framerate Cap:"))
-        fpsSegment = NSSegmentedControl(labels: ["30 FPS", "60 FPS"], trackingMode: .selectOne, target: self, action: #selector(fpsChanged(_:)))
-        let savedFps = UserDefaults.standard.double(forKey: MirrorSettings.StorageKeys.maxFps)
-        fpsSegment.selectedSegment = savedFps == 30.0 ? 0 : 1
-        fpsRow.addArrangedSubview(fpsSegment)
-        stack.addArrangedSubview(fpsRow)
-
-        // Codec
-        let codecRow = NSStackView()
-        codecRow.orientation = .horizontal
-        codecRow.spacing = 12
-        codecRow.addArrangedSubview(NSTextField(labelWithString: "Video Codec:"))
-        codecPopUp = NSPopUpButton()
-        codecPopUp.addItems(withTitles: VideoCodec.allCases.map { $0.rawValue })
-        let savedCodec = UserDefaults.standard.string(forKey: MirrorSettings.StorageKeys.codec) ?? VideoCodec.h264.rawValue
-        codecPopUp.selectItem(withTitle: savedCodec)
-        codecPopUp.target = self
-        codecPopUp.action = #selector(codecChanged(_:))
-        codecRow.addArrangedSubview(codecPopUp)
-        stack.addArrangedSubview(codecRow)
-
-        // Bitrate
-        let savedBitrate = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.bitrateMbps) != nil ?
-            UserDefaults.standard.double(forKey: MirrorSettings.StorageKeys.bitrateMbps) : 12.0
-        let bitRow = NSStackView()
-        bitRow.orientation = .horizontal
-        bitRow.spacing = 12
-        bitRow.addArrangedSubview(NSTextField(labelWithString: "Bitrate:"))
-        bitrateSlider = NSSlider(value: savedBitrate, minValue: 4.0, maxValue: 30.0, target: self, action: #selector(bitrateSliderChanged(_:)))
-        bitrateSlider.isContinuous = true
-        bitrateSlider.widthAnchor.constraint(equalToConstant: 160).isActive = true
-        bitRow.addArrangedSubview(bitrateSlider)
-        bitrateLabel = NSTextField(labelWithString: String(format: "%.0f Mbps", savedBitrate))
-        bitRow.addArrangedSubview(bitrateLabel)
-        stack.addArrangedSubview(bitRow)
-
-        // Audio
-        let savedAudio = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.audioEnabled) != nil ?
-            UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.audioEnabled) : true
-        audioCheckBox = NSSwitch()
-        audioCheckBox.target = self
-        audioCheckBox.action = #selector(audioToggled(_:))
-        audioCheckBox.state = savedAudio ? .on : .off
-        stack.addArrangedSubview(switchRow("Stream Android audio to Mac speakers", audioCheckBox))
-
-        // Screen Off
-        let savedScreenOff = UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.turnScreenOff)
-        screenOffCheckBox = NSSwitch()
-        screenOffCheckBox.target = self
-        screenOffCheckBox.action = #selector(screenOffToggled(_:))
-        screenOffCheckBox.state = savedScreenOff ? .on : .off
-        stack.addArrangedSubview(switchRow("Turn off device screen while mirroring", screenOffCheckBox))
-    }
-
-    @objc private func resolutionChanged(_ sender: NSPopUpButton) {
-        if let title = sender.titleOfSelectedItem {
-            UserDefaults.standard.set(title, forKey: MirrorSettings.StorageKeys.maxResolution)
-        }
-    }
-
-    @objc private func fpsChanged(_ sender: NSSegmentedControl) {
-        let fps: Double = sender.selectedSegment == 0 ? 30.0 : 60.0
-        UserDefaults.standard.set(fps, forKey: MirrorSettings.StorageKeys.maxFps)
-    }
-
-    @objc private func codecChanged(_ sender: NSPopUpButton) {
-        if let title = sender.titleOfSelectedItem {
-            UserDefaults.standard.set(title, forKey: MirrorSettings.StorageKeys.codec)
-        }
-    }
-
-    @objc private func bitrateSliderChanged(_ sender: NSSlider) {
-        bitrateLabel.stringValue = String(format: "%.0f Mbps", sender.doubleValue)
-        UserDefaults.standard.set(sender.doubleValue, forKey: MirrorSettings.StorageKeys.bitrateMbps)
-    }
-
-    @objc private func audioToggled(_ sender: NSSwitch) {
-        UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.audioEnabled)
-    }
-
-    @objc private func screenOffToggled(_ sender: NSSwitch) {
-        UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.turnScreenOff)
-    }
-}
-
-// MARK: - Clipboard Settings Tab
-
-public final class ClipboardSettingsViewController: NSViewController {
-    private var syncCheckBox: NSSwitch!
-    private var otpCheckBox: NSSwitch!
-
-    public override func loadView() {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
-        self.view = view
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 16
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 28),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32)
-        ])
-
-        let savedSync = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.autoSyncClipboard) != nil ?
-            UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.autoSyncClipboard) : true
-        syncCheckBox = NSSwitch()
-        syncCheckBox.target = self
-        syncCheckBox.action = #selector(syncToggled(_:))
-        syncCheckBox.state = savedSync ? .on : .off
-        stack.addArrangedSubview(switchRow("Automatically synchronize clipboard with Android", syncCheckBox))
-
-        let savedOtp = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.otpAutoForward) != nil ?
-            UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.otpAutoForward) : true
-        otpCheckBox = NSSwitch()
-        otpCheckBox.target = self
-        otpCheckBox.action = #selector(otpToggled(_:))
-        otpCheckBox.state = savedOtp ? .on : .off
-        stack.addArrangedSubview(switchRow("Automatically detect and forward SMS verification codes (OTP)", otpCheckBox))
-    }
-
-    @objc private func syncToggled(_ sender: NSSwitch) {
-        UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.autoSyncClipboard)
-    }
-
-    @objc private func otpToggled(_ sender: NSSwitch) {
-        UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.otpAutoForward)
-    }
-}
-
 // MARK: - Notification Settings Tab
 
 public final class NotificationSettingsViewController: NSViewController {
     private var notifCheckBox: NSSwitch!
     private var soundCheckBox: NSSwitch!
-    private var dndCheckBox: NSSwitch!
     private let appListStack = NSStackView()
     private var bridge: NotificationBridge { .shared }
 
     public override func loadView() {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 470))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 430))
         self.view = view
         preferredContentSize = view.frame.size
 
@@ -373,14 +190,6 @@ public final class NotificationSettingsViewController: NSViewController {
         soundCheckBox.action = #selector(soundToggled(_:))
         soundCheckBox.state = savedSound ? .on : .off
         stack.addArrangedSubview(switchRow("Play sound for incoming notifications", soundCheckBox))
-
-        let savedDnd = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.syncDnd) != nil ?
-            UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.syncDnd) : true
-        dndCheckBox = NSSwitch()
-        dndCheckBox.target = self
-        dndCheckBox.action = #selector(dndToggled(_:))
-        dndCheckBox.state = savedDnd ? .on : .off
-        stack.addArrangedSubview(switchRow("Sync Do Not Disturb / Focus mode", dndCheckBox))
 
         // Per-app on/off list
         let headerRow = NSStackView()
@@ -480,82 +289,11 @@ public final class NotificationSettingsViewController: NSViewController {
     @objc private func soundToggled(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.notificationSound)
     }
-
-    @objc private func dndToggled(_ sender: NSSwitch) {
-        UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.syncDnd)
-    }
 }
 
 /// Keeps the app list pinned to the top of its scroll view.
 private final class FlippedClipView: NSClipView {
     override var isFlipped: Bool { true }
-}
-
-// MARK: - File Settings Tab
-
-public final class FileSettingsViewController: NSViewController {
-    private var pathField: NSTextField!
-    private var organizeCheckBox: NSSwitch!
-
-    public override func loadView() {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
-        self.view = view
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 16
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 28),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32)
-        ])
-
-        let pathLabel = NSTextField(labelWithString: "Default Download Directory:")
-        stack.addArrangedSubview(pathLabel)
-
-        let pathRow = NSStackView()
-        pathRow.orientation = .horizontal
-        pathRow.spacing = 8
-
-        let defaultPath = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? "/Users/Shared"
-        let savedPath = UserDefaults.standard.string(forKey: MirrorSettings.StorageKeys.downloadDirectory) ?? defaultPath
-
-        pathField = NSTextField(string: savedPath.isEmpty ? defaultPath : savedPath)
-        pathField.isEditable = false
-        pathField.widthAnchor.constraint(equalToConstant: 320).isActive = true
-        pathRow.addArrangedSubview(pathField)
-
-        let browseBtn = NSButton(title: "Choose...", target: self, action: #selector(browseClicked(_:)))
-        pathRow.addArrangedSubview(browseBtn)
-        stack.addArrangedSubview(pathRow)
-
-        let savedOrg = UserDefaults.standard.object(forKey: MirrorSettings.StorageKeys.autoOrganizeFiles) != nil ?
-            UserDefaults.standard.bool(forKey: MirrorSettings.StorageKeys.autoOrganizeFiles) : true
-        organizeCheckBox = NSSwitch()
-        organizeCheckBox.target = self
-        organizeCheckBox.action = #selector(organizeToggled(_:))
-        organizeCheckBox.state = savedOrg ? .on : .off
-        stack.addArrangedSubview(switchRow("Automatically organize received files by type", organizeCheckBox))
-    }
-
-    @objc private func browseClicked(_ sender: NSButton) {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url {
-            pathField.stringValue = url.path
-            UserDefaults.standard.set(url.path, forKey: MirrorSettings.StorageKeys.downloadDirectory)
-        }
-    }
-
-    @objc private func organizeToggled(_ sender: NSSwitch) {
-        UserDefaults.standard.set(sender.state == .on, forKey: MirrorSettings.StorageKeys.autoOrganizeFiles)
-    }
 }
 
 // MARK: - About Settings Tab
@@ -580,7 +318,7 @@ public final class AboutSettingsViewController: NSViewController {
         ])
 
         let iconImageView = NSImageView()
-        iconImageView.image = NSImage(systemSymbolName: "bolt.horizontal.fill", accessibilityDescription: "DroidLink")
+        iconImageView.image = NSImage(systemSymbolName: "bell.badge.fill", accessibilityDescription: "DroidLink")
         iconImageView.contentTintColor = .droidAccent
         iconImageView.widthAnchor.constraint(equalToConstant: 64).isActive = true
         iconImageView.heightAnchor.constraint(equalToConstant: 64).isActive = true
@@ -590,12 +328,12 @@ public final class AboutSettingsViewController: NSViewController {
         titleLabel.font = .systemFont(ofSize: 22, weight: .bold)
         stack.addArrangedSubview(titleLabel)
 
-        let verLabel = NSTextField(labelWithString: "Version 1.0.0 (Pure AppKit)")
+        let verLabel = NSTextField(labelWithString: "Version 1.0.0 (Notifications Edition)")
         verLabel.font = .systemFont(ofSize: 12)
         verLabel.textColor = .secondaryLabelColor
         stack.addArrangedSubview(verLabel)
 
-        let descLabel = NSTextField(labelWithString: "High-performance screen mirroring & companion suite for Android & macOS.")
+        let descLabel = NSTextField(labelWithString: "Android phone notifications bridged directly to your Mac.")
         descLabel.font = .systemFont(ofSize: 12)
         descLabel.textColor = .secondaryLabelColor
         descLabel.alignment = .center
@@ -617,6 +355,6 @@ private func switchRow(_ title: String, _ toggle: NSSwitch) -> NSView {
     row.orientation = .horizontal
     row.alignment = .centerY
     row.spacing = 12
-    row.widthAnchor.constraint(equalToConstant: 440).isActive = true // pane is 500 wide; switch sits at the right edge
+    row.widthAnchor.constraint(equalToConstant: 440).isActive = true
     return row
 }

@@ -29,7 +29,7 @@ class BootReceiver : BroadcastReceiver() {
             action == "com.htc.intent.action.QUICKBOOT_POWERON"
         ) {
             val prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
-            val autoConnectEnabled = prefs.getBoolean(Constants.PREF_KEY_AUTO_CONNECT, false)
+            val autoConnectEnabled = prefs.getBoolean(Constants.PREF_KEY_AUTO_CONNECT, true)
 
             if (autoConnectEnabled) {
                 Log.i(TAG, "Auto-connect enabled. Starting ConnectionService on boot.")

@@ -18,6 +18,7 @@ public struct DiscoveredDevice: Identifiable, Equatable, Hashable, Sendable {
     public var ipAddress: String?
     public var port: UInt16?
     public var adbSerial: String?
+    public var bonjourServiceName: String?
     public var isPaired: Bool
     public var lastSeen: Date
 
@@ -28,12 +29,9 @@ public struct DiscoveredDevice: Identifiable, Equatable, Hashable, Sendable {
 
         public var iconName: String {
             switch self {
-            case .usb:
-                return "cable.connector"
-            case .mdnsWifi:
-                return "bonjour"
-            case .wirelessAdb:
-                return "wifi"
+            case .usb: return "cable.connector"
+            case .mdnsWifi: return "bonjour"
+            case .wirelessAdb: return "wifi"
             }
         }
     }
@@ -46,6 +44,7 @@ public struct DiscoveredDevice: Identifiable, Equatable, Hashable, Sendable {
         ipAddress: String? = nil,
         port: UInt16? = nil,
         adbSerial: String? = nil,
+        bonjourServiceName: String? = nil,
         isPaired: Bool = false,
         lastSeen: Date = Date()
     ) {
@@ -56,6 +55,7 @@ public struct DiscoveredDevice: Identifiable, Equatable, Hashable, Sendable {
         self.ipAddress = ipAddress
         self.port = port
         self.adbSerial = adbSerial
+        self.bonjourServiceName = bonjourServiceName
         self.isPaired = isPaired
         self.lastSeen = lastSeen
     }
@@ -65,12 +65,13 @@ extension DeviceDiscovery {
     public static let didUpdateDevicesNotification = Notification.Name("DeviceDiscoveryDidUpdateDevicesNotification")
 }
 
-/// Service that discovers Android devices concurrently via mDNS (Bonjour) and ADB USB/TCP.
+/// Event-driven device discovery via mDNS (Bonjour) and ADB notifications — zero polling timers.
 public final class DeviceDiscovery: @unchecked Sendable {
     // MARK: - State
 
     public var discoveredDevices: [DiscoveredDevice] = [] {
         didSet {
+            guard discoveredDevices != oldValue else { return }
             NotificationCenter.default.post(name: DeviceDiscovery.didUpdateDevicesNotification, object: self)
         }
     }
@@ -81,7 +82,7 @@ public final class DeviceDiscovery: @unchecked Sendable {
 
     private var mdnsBrowser: NWBrowser?
     private let discoveryQueue = DispatchQueue(label: "com.droidlink.devicediscovery", qos: .utility)
-    private var adbObserverTimer: Timer?
+    private var resolvedMdnsCache: [String: (ip: String, port: UInt16)] = [:]
 
     // MARK: - Shared Instance
 
@@ -90,10 +91,17 @@ public final class DeviceDiscovery: @unchecked Sendable {
     // MARK: - Initialization
 
     public init() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(adbDevicesUpdated(_:)),
+            name: ADBService.didUpdateDevicesNotification,
+            object: nil
+        )
         startDiscovery()
     }
 
     deinit {
+        NotificationCenter.default.removeObserver(self)
         stopDiscovery()
     }
 
@@ -104,40 +112,32 @@ public final class DeviceDiscovery: @unchecked Sendable {
         isBrowsing = true
 
         startMdnsBrowser()
-        startAdbDevicePolling()
+        pollAdbDevices()
     }
 
     public func stopDiscovery() {
         isBrowsing = false
         stopMdnsBrowser()
-        stopAdbDevicePolling()
     }
 
     // MARK: - mDNS / Bonjour Browser
 
     private func startMdnsBrowser() {
+        guard mdnsBrowser == nil else { return }
         let parameters = NWParameters()
         parameters.includePeerToPeer = true
 
-        // Browsing for DroidLink Companion service: _droidlink._tcp
         let descriptor = NWBrowser.Descriptor.bonjour(type: "_droidlink._tcp", domain: "local.")
         let browser = NWBrowser(for: descriptor, using: parameters)
 
         browser.stateUpdateHandler = { [weak self] newState in
-            switch newState {
-            case .ready:
-                break
-            case .failed(let error):
+            if case .failed(let error) = newState {
                 print("mDNS Browser failed: \(error)")
                 self?.stopMdnsBrowser()
-            case .cancelled:
-                break
-            default:
-                break
             }
         }
 
-        browser.browseResultsChangedHandler = { [weak self] results, changes in
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
             self?.handleMdnsResults(results)
         }
 
@@ -151,48 +151,62 @@ public final class DeviceDiscovery: @unchecked Sendable {
     }
 
     private func handleMdnsResults(_ results: Set<NWBrowser.Result>) {
-        var wifiDevices: [DiscoveredDevice] = []
-
+        var serviceNames: [String] = []
         for result in results {
             if case .service(let name, _, _, _) = result.endpoint {
-                let id = "bonjour_\(name)"
-                let device = DiscoveredDevice(
-                    id: id,
-                    name: name,
-                    model: "Android Companion",
-                    transport: .mdnsWifi,
-                    isPaired: checkIfPreviouslyPaired(id: id)
-                )
-                wifiDevices.append(device)
+                serviceNames.append(name)
             }
         }
 
-        mergeDevices(newDevices: wifiDevices, transport: .mdnsWifi)
-    }
+        let activeSet = Set(serviceNames)
+        resolvedMdnsCache = resolvedMdnsCache.filter { activeSet.contains($0.key) }
 
-    // MARK: - ADB Device Polling
+        // Publish immediately with bonjourServiceName so NWConnection can connect right away,
+        // even before NetService finishes IPv4 resolution.
+        publishMdnsDevices(for: serviceNames)
 
-    private func startAdbDevicePolling() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.pollAdbDevices()
-            self.adbObserverTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
-                self?.pollAdbDevices()
+        for name in serviceNames where resolvedMdnsCache[name] == nil {
+            Resolver.resolve(type: "_droidlink._tcp.", name: name) { [weak self] ip, port in
+                guard let self, let ip, port > 0 else { return }
+                self.discoveryQueue.async {
+                    self.resolvedMdnsCache[name] = (ip, UInt16(port))
+                    self.publishMdnsDevices(for: serviceNames)
+                }
             }
-            self.adbObserverTimer?.tolerance = 1
         }
     }
 
-    private func stopAdbDevicePolling() {
-        adbObserverTimer?.invalidate()
-        adbObserverTimer = nil
+    private func publishMdnsDevices(for serviceNames: [String]) {
+        let wifiDevices: [DiscoveredDevice] = serviceNames.map { name in
+            let resolved = resolvedMdnsCache[name]
+            let cleanName = name
+                .replacingOccurrences(of: "DroidLink-Companion-", with: "")
+                .replacingOccurrences(of: "_", with: " ")
+            let id = "bonjour_\(name)"
+            return DiscoveredDevice(
+                id: id,
+                name: cleanName.isEmpty ? name : cleanName,
+                model: cleanName,
+                transport: .mdnsWifi,
+                ipAddress: resolved?.ip,
+                port: resolved?.port,
+                bonjourServiceName: name,
+                isPaired: checkIfPreviouslyPaired(id: id)
+            )
+        }
+        mergeDevices(newDevices: wifiDevices, replacing: [.mdnsWifi])
+    }
+
+    // MARK: - Event-Driven ADB Device Sync
+
+    @objc private func adbDevicesUpdated(_ notif: Notification) {
+        pollAdbDevices()
     }
 
     private func pollAdbDevices() {
-        let adb = ADBService.shared
-        let adbDevices = adb.devices
+        let adbDevices = ADBService.shared.devices
 
-        var usbDevices: [DiscoveredDevice] = []
+        var adbDiscovered: [DiscoveredDevice] = []
         for d in adbDevices where d.state == .device {
             let isWireless = d.isWireless
             let friendlyName = d.model ?? d.serial
@@ -204,31 +218,45 @@ public final class DeviceDiscovery: @unchecked Sendable {
                 adbSerial: d.serial,
                 isPaired: true
             )
-            usbDevices.append(device)
+            adbDiscovered.append(device)
         }
 
-        mergeDevices(newDevices: usbDevices, transport: .usb)
+        mergeDevices(newDevices: adbDiscovered, replacing: [.usb, .wirelessAdb])
     }
 
     // MARK: - Device Merging
 
-    private func mergeDevices(newDevices: [DiscoveredDevice], transport: DiscoveredDevice.TransportType) {
+    private func mergeDevices(newDevices: [DiscoveredDevice], replacing transports: Set<DiscoveredDevice.TransportType>) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
-            // Retain devices from other transports, replace current transport devices
-            var updated = self.discoveredDevices.filter { $0.transport != transport }
+            var updated = self.discoveredDevices.filter { !transports.contains($0.transport) }
             updated.append(contentsOf: newDevices)
 
-            // Deduplicate by id
             var seen = Set<String>()
             let unique = updated.filter { seen.insert($0.id).inserted }
 
-            // Always prioritize USB / ADB devices at the top
-            self.discoveredDevices = unique.sorted { d1, d2 in
-                if d1.transport == .usb && d2.transport != .usb { return true }
-                if d1.transport != .usb && d2.transport == .usb { return false }
+            let sorted = unique.sorted { d1, d2 in
+                let rank: (DiscoveredDevice.TransportType) -> Int = {
+                    switch $0 {
+                    case .usb: return 0
+                    case .wirelessAdb: return 1
+                    case .mdnsWifi: return 2
+                    }
+                }
+                if rank(d1.transport) != rank(d2.transport) {
+                    return rank(d1.transport) < rank(d2.transport)
+                }
                 return d1.name < d2.name
+            }
+
+            let same = self.discoveredDevices.count == sorted.count && zip(self.discoveredDevices, sorted).allSatisfy { a, b in
+                a.id == b.id && a.name == b.name && a.transport == b.transport &&
+                a.ipAddress == b.ipAddress && a.port == b.port &&
+                a.adbSerial == b.adbSerial && a.bonjourServiceName == b.bonjourServiceName
+            }
+            if !same {
+                self.discoveredDevices = sorted
             }
         }
     }

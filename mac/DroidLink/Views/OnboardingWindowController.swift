@@ -8,7 +8,7 @@
 
 import AppKit
 
-/// Wizard window controller guiding users through Android device setup.
+/// Wizard window controller guiding users through Android phone notification setup.
 public final class OnboardingWindowController: NSWindowController {
     public static let shared = OnboardingWindowController()
 
@@ -42,7 +42,6 @@ public final class OnboardingViewController: NSViewController {
     private var totalSteps: Int { steps.count }
 
     private var titleLabel: NSTextField!
-    private var subtitleLabel: NSTextField!
     private var iconView: NSImageView!
     private var instructionTextView: NSTextView!
     private var progressIndicator: NSProgressIndicator!
@@ -56,35 +55,35 @@ public final class OnboardingViewController: NSViewController {
         let title: String
         let icon: String
         let text: String
-        var button: String? = nil // optional extra action shown in the bottom bar
+        var button: String? = nil
     }
 
     private let steps: [StepInfo] = [
         StepInfo(
             title: "Welcome to DroidLink",
-            icon: "bolt.horizontal.fill",
-            text: "DroidLink links your Android phone to this Mac over Wi-Fi, no cable needed.\n\n• See and control your phone in a window\n• Get phone notifications, calls and texts on the Mac\n• Share the clipboard and send files both ways\n• Use the phone as a webcam\n\nSetup takes about two minutes."
+            icon: "bell.badge.fill",
+            text: "DroidLink sends your Android phone notifications straight to this Mac.\n\n• See phone notifications as native macOS banners\n• Reply to messages right from a notification or this window\n• Dismiss notifications on your Mac to clear them on your phone\n• Choose which phone apps are allowed to notify on your Mac\n\nSetup takes about two minutes."
         ),
         StepInfo(
             title: "Turn On Wireless Debugging",
             icon: "wrench.and.screwdriver.fill",
-            text: "On your phone:\n\n1. Open Settings › About phone and tap Build number 7 times, until it says you're a developer.\n2. Go to Settings › System › Developer options.\n3. Turn on Wireless debugging and tap Allow.\n\nThe phone and the Mac must be on the same Wi-Fi for this first pairing."
+            text: "On your phone:\n\n1. Open Settings › About phone and tap Build number 7 times, until it says you're a developer.\n2. Go to Settings › System › Developer options.\n3. Turn on Wireless debugging and tap Allow.\n\nThe phone and the Mac must be on the same Wi-Fi for this first pairing (or plug in via USB with USB debugging enabled)."
         ),
         StepInfo(
             title: "Pair With a QR Code",
             icon: "qrcode",
-            text: "1. Click Show QR Code below. A pairing code opens on the Mac.\n2. On the phone, in Wireless debugging, tap Pair device with QR code.\n3. Point the phone at the code on the Mac.\n\nThat's it. DroidLink remembers the phone and reconnects on its own next time, even after a restart. You can also add phones later from the bolt icon in the menu bar › Add Phone with QR Code.",
+            text: "1. Click Show QR Code below. A pairing code opens on the Mac.\n2. On the phone, in Wireless debugging, tap Pair device with QR code.\n3. Point the phone at the code on the Mac.\n\nDroidLink remembers the phone and reconnects automatically next time. You can also add phones later from the menu bar › Add Phone with QR Code.",
             button: "Show QR Code"
         ),
         StepInfo(
-            title: "Open the Phone App",
+            title: "Enable Notification Access",
             icon: "iphone.gen3",
-            text: "Open the DroidLink app on the phone and allow what it asks for:\n\n• Notification access, so notifications appear on the Mac\n• Phone, contacts and SMS, so calls and texts show up\n• Files and photos, so you can send them to the Mac\n\nWhen it says Connected, you're linked."
+            text: "Open the DroidLink app on your phone and grant Notification Access when prompted.\n\nThis lets DroidLink forward incoming notifications to your Mac and send your quick replies back.\n\nWhen it says Connected, notifications start appearing automatically."
         ),
         StepInfo(
             title: "You're All Set",
             icon: "checkmark.seal.fill",
-            text: "Here's where everything lives:\n\n• Dashboard: phone battery, storage and quick actions\n• Mirror: shows and controls your phone screen\n• Notifications, Files and Messages: in the sidebar\n\nAway from home? If both devices are on Tailscale, DroidLink finds the phone there too.\n\nYou can reopen this guide any time with the ? button in the sidebar."
+            text: "Your phone notifications will now appear in macOS Notification Center and in the DroidLink window.\n\n• Click Reply on any message notification to respond directly\n• Click Settings (gear icon) to choose which apps can notify on your Mac\n\nYou can reopen this guide any time from the ? button in the toolbar."
         )
     ]
 
@@ -92,7 +91,6 @@ public final class OnboardingViewController: NSViewController {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 480))
         self.view = container
 
-        // Progress bar at top
         progressIndicator = NSProgressIndicator()
         progressIndicator.isIndeterminate = false
         progressIndicator.minValue = 0
@@ -107,20 +105,17 @@ public final class OnboardingViewController: NSViewController {
         stepLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stepLabel)
 
-        // Icon
         iconView = NSImageView()
-        iconView.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Step Icon")
+        iconView.image = NSImage(systemSymbolName: "bell.badge.fill", accessibilityDescription: "Step Icon")
         iconView.contentTintColor = .droidAccent
         iconView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(iconView)
 
-        // Title
         titleLabel = NSTextField(labelWithString: "Welcome to DroidLink")
         titleLabel.font = .systemFont(ofSize: 20, weight: .bold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(titleLabel)
 
-        // Instructions text scroll view
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
@@ -136,13 +131,11 @@ public final class OnboardingViewController: NSViewController {
         scroll.documentView = instructionTextView
         container.addSubview(scroll)
 
-        // Bottom separator
         let sep = NSBox()
         sep.boxType = .separator
         sep.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(sep)
 
-        // Bottom buttons
         backButton = NSButton(title: "Previous", target: self, action: #selector(backClicked(_:)))
         backButton.translatesAutoresizingMaskIntoConstraints = false
         backButton.isEnabled = false
@@ -216,11 +209,7 @@ public final class OnboardingViewController: NSViewController {
         backButton.isEnabled = currentStep > 0
         actionButton.title = step.button ?? ""
         actionButton.isHidden = step.button == nil
-        if currentStep == totalSteps - 1 {
-            nextButton.title = "Get Started"
-        } else {
-            nextButton.title = "Continue"
-        }
+        nextButton.title = currentStep == totalSteps - 1 ? "Get Started" : "Continue"
     }
 
     @objc private func actionClicked(_ sender: NSButton) {
@@ -239,7 +228,6 @@ public final class OnboardingViewController: NSViewController {
             currentStep += 1
             updateStepUI()
         } else {
-            // Finished
             view.window?.close()
         }
     }

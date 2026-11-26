@@ -20,7 +20,6 @@ import android.os.Environment
 import android.os.StatFs
 import android.util.DisplayMetrics
 import android.view.WindowManager
-import com.droidlink.companion.models.ProtocolMessage
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
@@ -150,30 +149,6 @@ class DeviceInfo(private val context: Context) {
                 @Suppress("DEPRECATION")
                 windowManager.defaultDisplay.refreshRate
             }.getOrDefault(60.0f)
-        )
-    }
-
-    /**
-     * Generates a snapshot of device status for Mac sync.
-     */
-    fun getDeviceStatusMessage(): ProtocolMessage.DeviceStatus {
-        val battery = getBatteryInfo()
-        val storage = getStorageInfo()
-        val network = getNetworkInfo()
-
-        val thermalStatus = when {
-            battery.temperatureCelsius > 42.0f -> "Critical"
-            battery.temperatureCelsius > 38.0f -> "Warm"
-            else -> "Normal"
-        }
-
-        return ProtocolMessage.DeviceStatus(
-            batteryLevel = battery.level,
-            isCharging = battery.isCharging,
-            thermalStatus = thermalStatus,
-            wifiSsid = network.ssid,
-            freeStorageBytes = storage.freeBytes,
-            totalStorageBytes = storage.totalBytes
         )
     }
 

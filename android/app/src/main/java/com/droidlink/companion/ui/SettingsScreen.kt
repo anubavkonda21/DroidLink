@@ -2,8 +2,7 @@
  * DroidLink Android Companion Application
  * Copyright (c) 2026 DroidLink Project. All rights reserved.
  *
- * User Settings Screen covering video encoder controls, network preference,
- * clipboard sync options, and app info.
+ * Settings Screen covering connection discovery, notification access, and app info.
  */
 
 package com.droidlink.companion.ui
@@ -11,7 +10,6 @@ package com.droidlink.companion.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -29,58 +27,46 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Router
-import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.UploadFile
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.droidlink.companion.ui.theme.Accents
 import com.droidlink.companion.ui.theme.GlassSwitch
 import com.droidlink.companion.utils.Constants
+import com.droidlink.companion.utils.Features
+import com.droidlink.companion.utils.PermissionHelper
 
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE) }
 
-    // Every setting is saved as it changes, so it survives app restarts and updates
-    // Connection settings
-    var preferredMode by remember { prefs.stringPref("preferred_mode", Constants.MODE_AUTO) }
-    var servicePort by remember { prefs.stringPref("service_port", Constants.DEFAULT_CONTROL_PORT.toString()) }
+    var preferredMode by remember { prefs.stringPref(Constants.PREF_KEY_PREFERRED_MODE, Constants.MODE_AUTO) }
+    var servicePort by remember { prefs.stringPref(Constants.PREF_KEY_PORT, Constants.DEFAULT_CONTROL_PORT.toString()) }
+    var autoStartOnBoot by remember { mutableStateOf(prefs.getBoolean(Constants.PREF_KEY_AUTO_CONNECT, true)) }
+    var notificationsOn by remember { mutableStateOf(Features.isOn(context, Features.NOTIFICATIONS)) }
 
-    // Clipboard & Notifications
-    var clipboardAutoSync by remember { prefs.boolPref("clipboard_auto_sync", true) }
-    var otpForwarding by remember { prefs.boolPref("otp_forwarding", true) }
-    var autoAcceptFiles by remember { prefs.boolPref("auto_accept_files", false) }
-
-    // Dialogs
     var showModeDialog by remember { mutableStateOf(false) }
     var showLicensesDialog by remember { mutableStateOf(false) }
 
@@ -97,12 +83,45 @@ fun SettingsScreen() {
             color = MaterialTheme.colorScheme.primary
         )
         Text(
-            text = "Connection, sync and app info",
+            text = "Notifications, connection and app info",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
         Spacer(modifier = Modifier.height(20.dp))
+
+        // SECTION: Notifications
+        SettingsSectionHeader(icon = Icons.Default.Notifications, title = "Notifications", color = Accents.Pink)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                SettingsSwitchRow(
+                    title = "Forward Phone Notifications",
+                    subtitle = "Send notifications from this phone to your Mac",
+                    checked = notificationsOn,
+                    onCheckedChange = {
+                        notificationsOn = it
+                        Features.set(context, Features.NOTIFICATIONS, it)
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                SettingsClickableRow(
+                    title = "Notification Access",
+                    subtitle = if (PermissionHelper.isNotificationServiceEnabled(context))
+                        "Allowed in Android settings" else "Tap to enable in Android settings",
+                    onClick = {
+                        context.startActivity(PermissionHelper.createNotificationListenerSettingsIntent())
+                    }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
 
         // SECTION: Connection
         SettingsSectionHeader(icon = Icons.Default.Router, title = "Connection & Discovery", color = Accents.Blue)
@@ -112,6 +131,18 @@ fun SettingsScreen() {
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
+                SettingsSwitchRow(
+                    title = "Start in Background on Boot",
+                    subtitle = "Automatically resume notification forwarding after restarting your phone",
+                    checked = autoStartOnBoot,
+                    onCheckedChange = {
+                        autoStartOnBoot = it
+                        prefs.edit().putBoolean(Constants.PREF_KEY_AUTO_CONNECT, it).apply()
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
                 SettingsClickableRow(
                     title = "Preferred Transport",
                     subtitle = preferredMode,
@@ -141,43 +172,6 @@ fun SettingsScreen() {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // SECTION: Clipboard & File Transfer
-        SettingsSectionHeader(icon = Icons.Default.Sync, title = "Sync", color = Accents.Orange)
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                SettingsSwitchRow(
-                    title = "Auto-sync Clipboard",
-                    subtitle = "Instantly copy text and links to/from Mac",
-                    checked = clipboardAutoSync,
-                    onCheckedChange = { clipboardAutoSync = it }
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                SettingsSwitchRow(
-                    title = "Detect & Forward OTPs",
-                    subtitle = "Extract 2FA verification codes for one-click copy on Mac",
-                    checked = otpForwarding,
-                    onCheckedChange = { otpForwarding = it }
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                SettingsSwitchRow(
-                    title = "Auto-accept Files",
-                    subtitle = "Save incoming files from paired Mac to Downloads/DroidLink",
-                    checked = autoAcceptFiles,
-                    onCheckedChange = { autoAcceptFiles = it }
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
         // SECTION: About
         SettingsSectionHeader(icon = Icons.Default.Info, title = "About", color = Accents.Teal)
         Card(
@@ -187,7 +181,7 @@ fun SettingsScreen() {
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = "DroidLink Companion for Android",
+                    text = "DroidLink Notifications for Android",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -221,7 +215,6 @@ fun SettingsScreen() {
         Spacer(modifier = Modifier.height(30.dp))
     }
 
-    // Preferred Transport Dialog
     if (showModeDialog) {
         val modes = listOf(Constants.MODE_AUTO, Constants.MODE_WIFI, Constants.MODE_USB)
         AlertDialog(
@@ -257,7 +250,6 @@ fun SettingsScreen() {
         )
     }
 
-    // Open Source Licenses Dialog
     if (showLicensesDialog) {
         AlertDialog(
             onDismissRequest = { showLicensesDialog = false },
@@ -265,7 +257,7 @@ fun SettingsScreen() {
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Text(
-                        "DroidLink is built using high-performance open source libraries:\n\n" +
+                        "DroidLink is built using open source libraries:\n\n" +
                                 "• Jetpack Compose & Material 3 (Apache 2.0)\n" +
                                 "• Kotlin Coroutines & Serialization (Apache 2.0)\n" +
                                 "• OkHttp (Apache 2.0)\n" +
@@ -305,40 +297,39 @@ private fun SettingsClickableRow(title: String, subtitle: String, onClick: () ->
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-private fun SettingsSwitchRow(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun SettingsSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Spacer(Modifier.width(12.dp))
         GlassSwitch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
-/** A Compose state that writes every change straight to SharedPreferences. */
-private class PrefState<T>(initial: T, private val save: (T) -> Unit) : androidx.compose.runtime.MutableState<T> {
-    private val state = mutableStateOf(initial)
-    override var value: T
-        get() = state.value
-        set(v) { state.value = v; save(v) }
-    override fun component1() = value
-    override fun component2(): (T) -> Unit = { value = it }
-}
-
-private fun android.content.SharedPreferences.boolPref(key: String, default: Boolean) =
-    PrefState(getBoolean(key, default)) { edit().putBoolean(key, it).apply() }
 private fun android.content.SharedPreferences.stringPref(key: String, default: String) =
-    PrefState(getString(key, default) ?: default) { edit().putString(key, it).apply() }
+    object : androidx.compose.runtime.MutableState<String> {
+        private val state = mutableStateOf(getString(key, default) ?: default)
+        override var value: String
+            get() = state.value
+            set(v) { state.value = v; edit().putString(key, v).apply() }
+        override fun component1() = value
+        override fun component2(): (String) -> Unit = { value = it }
+    }
